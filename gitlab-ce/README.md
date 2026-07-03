@@ -1,7 +1,8 @@
 # GitLab CE — Deployment & Operations Guide
 
-Deployed on **192.168.1.26 (jay2)** — Rocky Linux 9.3, 2 vCPU, 3.6GB RAM  
-Installation method: **GitLab Omnibus RPM**
+Deployed on **192.168.1.26 (jay2)** — Rocky Linux 9.3, 4 vCPU, 3.6GB RAM  
+Installation method: **GitLab Omnibus RPM**  
+GitLab version: **19.1.1-ce**
 
 ---
 
@@ -338,4 +339,171 @@ gitlab-ctl tail sidekiq
 
 # Disk usage breakdown
 du -sh /var/opt/gitlab/*/
+```
+
+---
+
+## GitLab Runner Setup
+
+### What is a GitLab Runner
+
+A GitLab Runner is an agent that picks up CI/CD jobs from GitLab and executes them. The runner polls GitLab for pending jobs, runs them in its configured executor (shell, Docker, Kubernetes, etc.), and streams logs back.
+
+In GitLab 16+, the registration flow changed. You now create a runner object **server-side first** (via UI or API), which gives you a runner authentication token (`glrt-...`). You then register the runner binary using that token. Tags, run-untagged settings, and access level are all configured on the server side — you can't pass them at registration time.
+
+### Architecture
+
+```
+GitLab Server (192.168.1.26)
+  └─► Job queue (Redis)
+        │
+        ▼ (runner polls every few seconds)
+GitLab Runner daemon (jay2, runs as gitlab-runner user)
+  └─► Shell executor
+        └─► Runs .gitlab-ci.yml jobs as shell processes
+              ├─ git clone the repo
+              ├─ execute each script step
+              └─ upload artifacts back to GitLab
+```
+
+### Installation (what we did)
+
+#### Step 1 — Create a Personal Access Token via Rails console
+
+Needed to call the GitLab API without clicking through the UI:
+
+```bash
+gitlab-rails runner "
+token = User.find_by_username('root').personal_access_tokens.create(
+  name: 'automation',
+  scopes: [:api, :read_user],
+  expires_at: 365.days.from_now
+)
+puts token.token
+" 2>/dev/null
+```
+
+This prints a `glpat-...` token.
+
+> **Why Rails console?** GitLab's web UI requires an active session. For scripted/automated setup, the Rails runner lets you execute Ruby directly against the GitLab application.
+
+#### Step 2 — Create the runner object on the server via API
+
+```bash
+curl --request POST 'http://192.168.1.26/api/v4/user/runners' \
+  --header 'PRIVATE-TOKEN: <your-glpat-token>' \
+  --form 'runner_type=instance_type' \
+  --form 'description=jay2-shell-runner' \
+  --form 'tag_list=shell,homelab,rocky9'
+```
+
+This returns a `glrt-...` runner authentication token. Instance runners are shared across all projects on the GitLab instance.
+
+#### Step 3 — Install the gitlab-runner package
+
+```bash
+curl -sL https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh | bash
+dnf install -y gitlab-runner
+```
+
+#### Step 4 — Register the runner
+
+```bash
+gitlab-runner register \
+  --non-interactive \
+  --url 'http://192.168.1.26' \
+  --token 'glrt-<your-runner-token>' \
+  --executor 'shell' \
+  --description 'jay2-shell-runner'
+```
+
+> **Note:** With `glrt-...` tokens, do NOT pass `--tag-list`, `--locked`, or `--run-untagged` here. Those are set server-side (either via API form fields or the GitLab UI). Passing them causes a fatal error.
+
+Config is saved to `/etc/gitlab-runner/config.toml`.
+
+#### Step 5 — Enable and start
+
+```bash
+systemctl enable --now gitlab-runner
+gitlab-runner status
+```
+
+#### Step 6 — Verify it's online
+
+```bash
+curl -s --header 'PRIVATE-TOKEN: <glpat-token>' \
+  'http://192.168.1.26/api/v4/runners/all' | python3 -m json.tool
+# Look for "status": "online"
+```
+
+Or in the GitLab UI: **Admin Area → CI/CD → Runners**
+
+---
+
+### Using the Runner — Example `.gitlab-ci.yml`
+
+Create a project in GitLab, push this file, and the runner will pick it up:
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - test
+  - deploy
+
+test-job:
+  stage: test
+  tags:
+    - shell          # matches our runner's tags
+  script:
+    - echo "Running on $(hostname)"
+    - echo "Branch: $CI_COMMIT_BRANCH"
+    - echo "Commit: $CI_COMMIT_SHA"
+
+deploy-to-k3s:
+  stage: deploy
+  tags:
+    - shell
+  only:
+    - main
+  script:
+    - kubectl apply -f k8s/   # works if kubeconfig is set on the runner host
+```
+
+### Runner Executor Types (and when to use them)
+
+| Executor | How it runs jobs | Use case |
+|----------|-----------------|----------|
+| `shell` | Directly on the runner host as the `gitlab-runner` user | Simple scripts, kubectl, ansible — what we use |
+| `docker` | Each job in a fresh Docker container | Isolated builds, language-specific toolchains |
+| `kubernetes` | Each job as a Kubernetes Pod | What Tower likely uses — clean isolation, scales |
+| `ssh` | SSH into a remote machine and run there | Legacy systems |
+
+**Tower's likely setup:** Kubernetes executor running on the k3s (or Kubespray) cluster. Each CI job gets a dedicated pod that's destroyed after the job. Clean, isolated, and scales with the cluster.
+
+### Runner Files
+
+| Path | Purpose |
+|------|---------|
+| `/etc/gitlab-runner/config.toml` | Runner configuration (registered runners, executor settings) |
+| `/var/log/gitlab-runner/` | Runner logs (also via `journalctl -u gitlab-runner`) |
+| `/home/gitlab-runner/` | Runner's home dir, job workspaces land here |
+
+### Key Runner Commands
+
+```bash
+# Check runner service
+systemctl status gitlab-runner
+journalctl -u gitlab-runner -f
+
+# List registered runners
+gitlab-runner list
+
+# Verify registered runners can reach GitLab
+gitlab-runner verify
+
+# Run a job locally for debugging (without GitLab)
+gitlab-runner exec shell <job-name>
+
+# Unregister a runner
+gitlab-runner unregister --name jay2-shell-runner
 ```
