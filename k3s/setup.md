@@ -18,7 +18,7 @@ Standard k3s ships with flannel (CNI) and kube-proxy (service routing via iptabl
 - **No kube-proxy** — Cilium's eBPF programs handle all service routing in-kernel
 - **No iptables rules** — ClusterIP lookups are O(1) eBPF map lookups, not O(n) iptables chain scans
 
-This mirrors production HFT platform setups (e.g. Tower Research Capital) where latency and scale matter.
+This mirrors production HFT platform setups (e.g. MacDonalds) where latency and scale matter.
 
 ---
 

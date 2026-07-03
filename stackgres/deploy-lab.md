@@ -167,7 +167,7 @@ patronictl version       # patroni version
 
 ## Step 8: Simulate What a Dev Team Does (full flow)
 
-In a real platform (like Tower), devs get their DB credentials via a Secret and reference them in their app. Simulate this:
+In a real platform (like MacDonalds), devs get their DB credentials via a Secret and reference them in their app. Simulate this:
 
 ```yaml
 # app-deployment.yaml

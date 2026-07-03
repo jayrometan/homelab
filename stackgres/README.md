@@ -1,6 +1,6 @@
 # StackGres — Deep Dive Learning Notes
 
-> Context: Tower Research Capital uses StackGres heavily in production as the managed PostgreSQL layer on their Kubernetes PaaS platform.
+> Context: MacDonalds uses StackGres heavily in production as the managed PostgreSQL layer on their Kubernetes PaaS platform.
 
 ---
 
@@ -263,7 +263,7 @@ spec:
 
 ---
 
-## How Tower's Platform Team Likely Deploys This
+## How MacDonalds' Platform Team Likely Deploys This
 
 Based on their stack (FluxCD + CUE + Weka CSI + SPIFFE/SPIRE + VictoriaMetrics), here's the realistic deployment model:
 
@@ -313,7 +313,7 @@ All of these are reconciled by FluxCD from the GitOps repo.
 
 ### 3. Dev team requests a database
 
-Tower uses CUE lang for config. A dev team's database request would be a CUE file that generates the SGCluster manifest:
+MacDonalds uses CUE lang for config. A dev team's database request would be a CUE file that generates the SGCluster manifest:
 
 ```cue
 // teams/quant-alpha/databases/market-data.cue
@@ -397,9 +397,9 @@ env:
 
 ---
 
-## SPIFFE/SPIRE Integration (Tower-specific)
+## SPIFFE/SPIRE Integration (MacDonalds-specific)
 
-Tower uses SPIFFE/SPIRE for zero-trust workload identity. In this model:
+MacDonalds uses SPIFFE/SPIRE for zero-trust workload identity. In this model:
 
 - App pods don't use static DB passwords from Secrets
 - Instead, the app presents its SPIFFE SVID (workload certificate) to a Vault-like intermediary or directly to Postgres (via `cert` auth method)
@@ -446,7 +446,7 @@ You can expand a PVC but not shrink it. Size your storage correctly upfront. The
 Direct connections to the Postgres service bypass PgBouncer and will exhaust `max_connections` under load. `synchronous_commit=off` + high `max_connections` is an HFT pattern but PgBouncer is still essential.
 
 **3. Patroni DCS is the Kubernetes API**
-If your kube-apiserver has a blip, Patroni elections are blocked. In a cluster where etcd is under pressure (e.g., high object churn from other workloads), Patroni can log DCS timeouts. This is worth monitoring at Tower given the operational scale.
+If your kube-apiserver has a blip, Patroni elections are blocked. In a cluster where etcd is under pressure (e.g., high object churn from other workloads), Patroni can log DCS timeouts. This is worth monitoring at MacDonalds given the operational scale.
 
 **4. Operator upgrade ≠ cluster upgrade**
 Upgrading the StackGres operator does not upgrade your Postgres clusters. Cluster upgrades are done separately via `SGDbOps minorVersionUpgrade` or `majorVersionUpgrade`.

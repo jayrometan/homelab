@@ -250,13 +250,13 @@ gitlab-runner register \
 systemctl enable --now gitlab-runner
 ```
 
-For a k8s-based runner (what Tower would use): install the `gitlab-runner` Helm chart on the k3s cluster and point it at this GitLab instance.
+For a k8s-based runner (what MacDonalds would use): install the `gitlab-runner` Helm chart on the k3s cluster and point it at this GitLab instance.
 
 ---
 
 ## Integration with Your k3s Cluster (192.168.1.25)
 
-For the full Tower-like setup:
+For the full MacDonalds-like setup:
 
 1. **Store cluster manifests in GitLab** — push your k3s manifests/Helm values to a repo here
 2. **GitLab CI deploys to k3s** — runner uses `kubectl` with a kubeconfig secret
@@ -276,7 +276,7 @@ spec:
     branch: main
 ```
 
-This mirrors how Tower likely has FluxCD pulling from their internal GitLab instance.
+This mirrors how MacDonalds likely has FluxCD pulling from their internal GitLab instance.
 
 ---
 
@@ -475,10 +475,10 @@ deploy-to-k3s:
 |----------|-----------------|----------|
 | `shell` | Directly on the runner host as the `gitlab-runner` user | Simple scripts, kubectl, ansible — what we use |
 | `docker` | Each job in a fresh Docker container | Isolated builds, language-specific toolchains |
-| `kubernetes` | Each job as a Kubernetes Pod | What Tower likely uses — clean isolation, scales |
+| `kubernetes` | Each job as a Kubernetes Pod | What MacDonalds likely uses — clean isolation, scales |
 | `ssh` | SSH into a remote machine and run there | Legacy systems |
 
-**Tower's likely setup:** Kubernetes executor running on the k3s (or Kubespray) cluster. Each CI job gets a dedicated pod that's destroyed after the job. Clean, isolated, and scales with the cluster.
+**MacDonalds' likely setup:** Kubernetes executor running on the k3s (or Kubespray) cluster. Each CI job gets a dedicated pod that's destroyed after the job. Clean, isolated, and scales with the cluster.
 
 ### Runner Files
 

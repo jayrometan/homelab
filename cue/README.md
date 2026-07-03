@@ -1,7 +1,7 @@
 # CUE Lang — Lesson Plan & Deep Dive
 
 > **Your lab:** GitLab CE at `192.168.1.26`, k3s cluster at `192.168.1.25`  
-> **Why CUE matters for you:** Tower uses CUE as the configuration layer across their entire PaaS stack — KubeVela component definitions, application manifests, policy enforcement. It touches everything.
+> **Why CUE matters for you:** MacDonalds uses CUE as the configuration layer across their entire PaaS stack — KubeVela component definitions, application manifests, policy enforcement. It touches everything.
 
 ---
 
@@ -75,7 +75,7 @@ Topics:
 - CUE packages (`package myapp`)
 - Importing stdlib (`encoding/json`, `encoding/yaml`, `list`, `strings`, `math`)
 - Importing local packages
-- How Tower likely organises their CUE: platform schemas vs team configs
+- How MacDonalds likely organises their CUE: platform schemas vs team configs
 
 Lab exercise: Split a schema into a `platform` package (defines `#App`, `#Database`) and a `team` package that imports and uses it.
 
@@ -96,11 +96,11 @@ Lab exercise (uses k3s): Write a `#App` CUE definition, fill in a concrete value
 ---
 
 ### Module 5 — CUE + GitLab CI + FluxCD (Day 6–7)
-**Goal:** Build the real pull-based GitOps loop Tower uses — NOT push-based CI/CD.
+**Goal:** Build the real pull-based GitOps loop MacDonalds uses — NOT push-based CI/CD.
 
 **The key distinction:**
-- ❌ Push model (not Tower): CI runner does `kubectl apply` directly — CI has cluster credentials, pushes changes in
-- ✅ Pull model (Tower): CI validates and commits rendered YAML to Git — FluxCD on the cluster pulls and applies
+- ❌ Push model (not MacDonalds): CI runner does `kubectl apply` directly — CI has cluster credentials, pushes changes in
+- ✅ Pull model (MacDonalds): CI validates and commits rendered YAML to Git — FluxCD on the cluster pulls and applies
 
 ```
 Developer pushes CUE config to GitLab
@@ -134,7 +134,7 @@ Lab exercise (uses GitLab + k3s + FluxCD):
 4. Watch FluxCD reconcile the committed YAML onto k3s without the runner touching the cluster
 5. Break your CUE → watch CI fail before any YAML is committed → cluster unchanged
 
-This is exactly how Tower's GitOps loop works.
+This is exactly how MacDonalds' GitOps loop works.
 
 ---
 
@@ -145,14 +145,14 @@ Topics:
 - OAM model: Application → Component → Trait → Policy → Workflow
 - ComponentDefinition's `schematic.cue` block — this IS CUE
 - Writing a custom component definition
-- How Tower's platform team likely defines their abstractions in CUE
+- How MacDonalds' platform team likely defines their abstractions in CUE
 
 Lab exercise: Deploy KubeVela on k3s, define a custom `ComponentDefinition` using CUE, deploy an `Application` that uses it.
 
 ---
 
-### Module 7 — Tower-style Config Workflow (Day 9–10)
-**Goal:** Simulate Tower's actual multi-team GitOps workflow end-to-end.
+### Module 7 — MacDonalds-style Config Workflow (Day 9–10)
+**Goal:** Simulate MacDonalds' actual multi-team GitOps workflow end-to-end.
 
 Topics:
 - Platform-owned schemas (the "contract")
@@ -234,7 +234,7 @@ alice: #Person & {
 }
 ```
 
-**Key rule:** Regular structs (`{}`) are open — extra fields allowed. Definitions (`#{}`) are closed — extra fields error. Tower's schemas are definitions, ensuring teams can't sneak in arbitrary fields.
+**Key rule:** Regular structs (`{}`) are open — extra fields allowed. Definitions (`#{}`) are closed — extra fields error. MacDonalds' schemas are definitions, ensuring teams can't sneak in arbitrary fields.
 
 ### Constraints on Values
 
@@ -478,7 +478,7 @@ If you have multiple top-level values in a package, `cue export` errors unless y
 
 ---
 
-## How This Fits Tower's Stack
+## How This Fits MacDonalds' Stack
 
 ```
 Developer writes CUE
