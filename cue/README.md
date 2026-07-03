@@ -95,21 +95,46 @@ Lab exercise (uses k3s): Write a `#App` CUE definition, fill in a concrete value
 
 ---
 
-### Module 5 — CUE + GitLab CI Pipeline (Day 6)
-**Goal:** Build the GitOps validation loop Tower uses.
+### Module 5 — CUE + GitLab CI + FluxCD (Day 6–7)
+**Goal:** Build the real pull-based GitOps loop Tower uses — NOT push-based CI/CD.
+
+**The key distinction:**
+- ❌ Push model (not Tower): CI runner does `kubectl apply` directly — CI has cluster credentials, pushes changes in
+- ✅ Pull model (Tower): CI validates and commits rendered YAML to Git — FluxCD on the cluster pulls and applies
+
+```
+Developer pushes CUE config to GitLab
+          │
+          ▼
+GitLab CI: cue vet (validate schema)
+          │
+          ▼
+GitLab CI: cue export → commit YAML to manifests/ in Git
+          │
+          ▼ (FluxCD polls GitLab every 1 minute)
+FluxCD on k3s detects new commit in manifests/
+          │
+          ▼
+FluxCD reconciles → cluster reaches desired state
+```
+
+The shell runner on jay2 never touches the cluster directly. It only validates and commits. The cluster drives itself.
 
 Topics:
-- `cue vet` in CI — catch bad configs before they hit the cluster
-- Pipeline: push CUE config → GitLab CI validates → exports YAML → applies to k3s
-- Enforcing schemas: team can only change allowed fields, platform controls the rest
+- Installing FluxCD on k3s, pointing at your GitLab instance (192.168.1.26)
+- FluxCD `GitRepository` + `Kustomization` CRDs
+- GitLab CI pipeline: validate CUE → export YAML → commit to `manifests/` branch
+- FluxCD picking up the committed manifests automatically
+- Why this model is safer: CI doesn't need cluster credentials
 
-Lab exercise (uses GitLab + k3s):
-1. Push a CUE project to GitLab
-2. Write a `.gitlab-ci.yml` that runs `cue vet` on all `.cue` files
-3. Add a deploy stage: `cue export | kubectl apply -f -` via the shell runner on jay2
-4. Break your CUE intentionally — watch the pipeline catch it
+Lab exercise (uses GitLab + k3s + FluxCD):
+1. Install FluxCD on k3s with a `GitRepository` pointing at your GitLab repo
+2. Push a CUE project to GitLab
+3. Write `.gitlab-ci.yml`: stage 1 = `cue vet`, stage 2 = `cue export` → git commit YAML to `manifests/`
+4. Watch FluxCD reconcile the committed YAML onto k3s without the runner touching the cluster
+5. Break your CUE → watch CI fail before any YAML is committed → cluster unchanged
 
-This is the exact GitOps loop Tower runs. Completing this exercise means you understand the full flow from config change to cluster state.
+This is exactly how Tower's GitOps loop works.
 
 ---
 
@@ -139,16 +164,32 @@ Lab exercise: Simulate two "teams" (two GitLab projects), one owning the schema,
 
 ---
 
+## Lab Infrastructure (Already Set Up)
+
+| Component | Host | Status |
+|-----------|------|--------|
+| k3s v1.36.2 + Cilium | 192.168.1.25 (jay1) | Running |
+| GitLab CE 19.1.1 | 192.168.1.26 (jay2) | Running |
+| GitLab Runner (shell) | 192.168.1.26 (jay2) | Online |
+| FluxCD v2.9.0 | k3s on jay1 | Bootstrapped |
+| CUE CLI v0.17.0 | jay1 | Installed |
+
+**FluxCD is bootstrapped against the local GitLab** (`http://192.168.1.26/root/homelab.git`, branch `main`, path `clusters/jay1`). Anything committed to that path is automatically reconciled onto k3s. This is your GitOps loop — ready to use from Module 5 onwards.
+
+**Repo remotes on jay1:**
+- `origin` → `github.com/jayrometan/homelab` (public notes backup)
+- `local` → `http://192.168.1.26/root/homelab.git` (FluxCD watches this)
+
+When doing lab exercises, push to `local` to trigger FluxCD reconciliation. Push to `origin` to keep GitHub in sync.
+
 ## Prerequisites — Install CUE CLI
 
-On jay1 (192.168.1.25 — your k3s node and deploy machine):
+Already installed on jay1 (`cue version v0.17.0`). To install elsewhere:
 
 ```bash
-# Install latest CUE CLI
-GOVERSION=$(curl -s https://api.github.com/repos/cue-lang/cue/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-curl -LO "https://github.com/cue-lang/cue/releases/download/${GOVERSION}/cue_${GOVERSION}_linux_amd64.tar.gz"
-tar -xzf cue_${GOVERSION}_linux_amd64.tar.gz
-mv cue /usr/local/bin/
+CUEVERSION=$(curl -s https://api.github.com/repos/cue-lang/cue/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+curl -LO "https://github.com/cue-lang/cue/releases/download/${CUEVERSION}/cue_${CUEVERSION}_linux_amd64.tar.gz"
+tar -xzf cue_${CUEVERSION}_linux_amd64.tar.gz && mv cue /usr/local/bin/
 cue version
 ```
 
@@ -462,6 +503,8 @@ Kubernetes cluster reaches desired state
 ```
 
 CUE is the **contract layer** — it's what ensures that what a dev team writes is actually valid before it ever touches a cluster. The platform team owns the schemas (`#App`, `#Database`, `#SGCluster`), teams fill in the values.
+
+**Important:** The GitLab CI runner (jay2) never runs `kubectl apply`. It only validates CUE and commits rendered YAML back to Git. FluxCD on k3s pulls from GitLab and applies — the cluster is always driving itself to match Git state. This separation is fundamental to GitOps.
 
 ---
 
