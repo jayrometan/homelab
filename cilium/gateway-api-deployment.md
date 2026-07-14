@@ -188,3 +188,70 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 ```
 
 This adds TCPRoute, TLSRoute, UDPRoute on top of the standard set.
+
+---
+
+## Cilium CLI
+
+Installed the Cilium CLI (`cilium` binary) for cluster inspection and debugging.
+
+### Install
+
+```bash
+curl -sL https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-amd64.tar.gz \
+  -o /tmp/cilium-cli.tar.gz
+tar xzf /tmp/cilium-cli.tar.gz -C /usr/local/bin cilium
+```
+
+Version installed: `v0.19.5`
+
+Also added to `/root/.bashrc` so all commands work without prefix:
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+```
+
+### Useful Commands
+
+```bash
+# Overall health — shows all components, image versions, pod counts
+cilium status
+
+# Full connectivity test — deploys test pods, exercises L3/L4/L7, cleans up
+cilium connectivity test
+
+# Watch live eBPF events (packet drops, policy verdicts, NAT translations)
+cilium monitor
+
+# List all eBPF service entries (kube-proxy replacement)
+cilium service list
+
+# Show BPF map for a specific pod's policy
+cilium policy get
+
+# Check which endpoints Cilium manages
+cilium endpoint list
+
+# Inspect LB-IPAM pool state
+kubectl get ciliumloadbalancerippool homelab-pool -o yaml
+```
+
+### Current Status
+
+```
+cilium status output (2026-07-14):
+
+    /¯¯\
+/¯¯\__/¯¯\    Cilium:             OK
+\__/¯¯\__/    Operator:           OK
+/¯¯\__/¯¯\    Envoy DaemonSet:    OK
+\__/¯¯\__/    Hubble Relay:       disabled
+    \__/       ClusterMesh:        disabled
+
+DaemonSet   cilium          Desired: 1, Ready: 1/1, Available: 1/1
+DaemonSet   cilium-envoy    Desired: 1, Ready: 1/1, Available: 1/1
+Deployment  cilium-operator Desired: 1, Ready: 1/1, Available: 1/1
+Cluster Pods: 7/7 managed by Cilium
+Helm chart version: 1.19.5
+```
+
+Hubble and ClusterMesh are disabled — fine for a single-node homelab. Hubble can be enabled later (`hubble.enabled=true` + `hubble.relay.enabled=true`) for flow-level observability.
