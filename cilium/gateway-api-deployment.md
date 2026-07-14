@@ -25,6 +25,28 @@ customresourcedefinition.apiextensions.k8s.io/referencegrants.gateway.networking
 
 ### Step 2 — Enable Gateway API in Cilium
 
+#### What `gatewayAPI.enabled=true` does
+
+Without this flag, Cilium ignores the Gateway API CRDs entirely — installing them has no effect.
+Enabling it tells Cilium to:
+
+- **Watch** `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `TCPRoute` CRDs for changes
+- **Create** the `cilium` GatewayClass automatically (this is what makes `kubectl get gatewayclass` return a result)
+- **Generate Envoy xDS config** from HTTPRoute rules and push it to the `cilium-envoy` DaemonSet
+- **Create a LoadBalancer Service** for each Gateway so LB-IPAM can assign it an IP
+
+The CRDs are just empty schemas until this flag is set. Cilium is the controller that makes them do something.
+
+#### Why `--reuse-values` matters
+
+`helm upgrade` without `--reuse-values` resets all values to chart defaults. On this cluster that would wipe:
+
+- `kubeProxyReplacement: true` — Cilium stops replacing kube-proxy, breaking all Service routing
+- `k8sServiceHost` / `k8sServicePort` — Cilium loses its API server reference, operator crashes
+- `ipam.mode: kubernetes` — IP allocation breaks
+
+`--reuse-values` keeps the existing config and only applies the new `--set` flags on top. Always use it when adding features to an existing Cilium install.
+
 Existing Cilium values before upgrade:
 ```yaml
 ipam:
