@@ -1,0 +1,45 @@
+# infrastructure/stackgres/cluster/sginstanceprofile.yaml
+#
+# SGInstanceProfile — T-shirt sizing for Postgres pods.
+#
+# Every container in a StackGres pod (postgres, patroni, pgbouncer, envoy,
+# postgres_exporter, fluent-bit) draws from this profile. The profile sets
+# the *total* CPU and memory that Kubernetes schedules for the pod; StackGres
+# distributes it internally across sidecars.
+#
+# Sidecar overhead estimate per pod:
+#   patroni         ~100MB RAM, ~50m CPU
+#   pgbouncer       ~50MB RAM,  ~20m CPU
+#   envoy           ~100MB RAM, ~50m CPU
+#   postgres_export ~50MB RAM,  ~20m CPU
+#   fluent-bit      ~50MB RAM,  ~10m CPU
+#   Total sidecars: ~350MB RAM, ~150m CPU
+#
+# So with memory: "4Gi", Postgres itself gets roughly 3.65Gi. With "2" CPU,
+# Postgres gets ~1.85 effective vCPUs.
+#
+# Production sizing for a 2000-person firm (OLTP workload):
+#   cpu:    "8"     → ~7.5 vCPUs for Postgres
+#   memory: "16Gi"  → ~15.5Gi for Postgres; set shared_buffers to 4Gi
+#
+# Homelab (single node, resources shared with all other workloads):
+#   cpu:    "2"
+#   memory: "4Gi"
+#
+# IMPORTANT: This object must live in the SAME namespace as the SGCluster
+# that references it. Platform teams often Flux-sync profiles to every
+# team namespace so teams can pick from a shared catalogue.
+apiVersion: stackgres.io/v1
+kind: SGInstanceProfile
+metadata:
+  name: production
+  namespace: postgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database
+spec:
+  # Homelab values — override these for real production:
+  #   cpu:    "8"
+  #   memory: "16Gi"
+  cpu: "2"
+  memory: "4Gi"

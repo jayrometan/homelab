@@ -1,0 +1,25 @@
+# clusters/jay1/stackgres-operator.yaml
+#
+# Flux Kustomization that deploys the StackGres operator into the cluster.
+# This is a platform-team-owned resource — the operator is cluster-wide and
+# is managed separately from the individual Postgres clusters it governs.
+#
+# Placement in clusters/jay1/ means the root flux-system Kustomization
+# (which watches ./clusters/jay1) picks this up automatically on git push.
+# No manual kubectl apply is ever needed.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: stackgres-operator
+  namespace: flux-system
+spec:
+  # Recheck every 30 minutes. The operator rarely changes; long interval
+  # keeps reconcile noise low and apiserver load minimal.
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system          # reuse the existing GitRepository that watches this repo
+  path: ./infrastructure/stackgres/operator
+  prune: true                  # if the HelmRelease is removed from git, Flux uninstalls it
+  wait: true                   # wait for the HelmRelease to report Ready before this Kustomization reports Ready
+  timeout: 15m                 # StackGres operator pulls ~500MB of images; give it time

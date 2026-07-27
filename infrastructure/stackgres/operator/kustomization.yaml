@@ -1,0 +1,10 @@
+# infrastructure/stackgres/operator/kustomization.yaml
+#
+# Kustomize manifest listing every resource in this directory.
+# Flux's kustomize-controller runs `kustomize build` here before applying.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - helmrepository.yaml
+  - helmrelease.yaml

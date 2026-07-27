@@ -1,0 +1,144 @@
+# infrastructure/stackgres/cluster/sgscript.yaml
+#
+# SGScript — SQL executed by the operator on first cluster boot.
+#
+# This is the database initialisation layer. Think of it as a Flyway/Liquibase
+# baseline migration that runs exactly once when the cluster is first created.
+# StackGres tracks which scripts have run via a state table and will not re-run
+# them on operator restarts or pod rescheduling.
+#
+# What belongs here (idempotent, one-time setup):
+#   ✓ Creating databases
+#   ✓ Creating roles WITHOUT passwords (passwords set out-of-band via Secret)
+#   ✓ Granting role memberships
+#   ✓ Enabling extensions
+#
+# What does NOT belong here:
+#   ✗ Passwords in plaintext — use scripts/create-pg-superuser.sh instead
+#   ✗ Application schema migrations — use Flyway/Liquibase in your CI/CD
+#   ✗ One-off DBA queries — use SGDbOps or psql directly
+#
+# Role design for a 2000-person firm (principle of least privilege):
+#
+#   postgres     — built-in superuser, StackGres-managed, do not use for apps
+#   dba          — superuser for platform/DBA team; never used by application code
+#   app_user     — read/write to app_db only; what application pods connect as
+#   readonly     — SELECT on all tables in app_db; for BI tools, analysts
+#   monitoring   — pg_monitor role; for Prometheus postgres_exporter
+#
+# Passwords are deliberately not set here. The companion shell script
+# (scripts/create-pg-superuser.sh) generates cryptographically secure
+# passwords, stores them in Kubernetes Secrets, and applies them to Postgres
+# after cluster creation. This keeps secrets out of Git entirely.
+apiVersion: stackgres.io/v1
+kind: SGScript
+metadata:
+  name: init-database
+  namespace: postgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database
+spec:
+  # continueOnSGScriptError: false means if any script fails, the sequence
+  # stops. This is safe here because all scripts are idempotent (IF NOT EXISTS).
+  continueOnSGScriptError: false
+  scripts:
+    # ── Script 1: Extensions ─────────────────────────────────────────────────
+    # Enable pg_stat_statements on the postgres database so it tracks queries
+    # from ALL databases (it's a shared extension that must be enabled globally).
+    - id: 1
+      name: enable-extensions
+      database: postgres
+      user: postgres
+      script: |
+        -- Track query performance across all databases.
+        -- pg_stat_statements is declared in shared_preload_libraries so it
+        -- is already loaded; CREATE EXTENSION makes it queryable.
+        CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+    # ── Script 2: Application database ───────────────────────────────────────
+    - id: 2
+      name: create-app-database
+      database: postgres
+      user: postgres
+      script: |
+        -- The primary application database. In production you may have several:
+        -- app_db (OLTP), reporting_db (read replicas), audit_db (append-only).
+        SELECT 'CREATE DATABASE app_db'
+        WHERE NOT EXISTS (
+          SELECT FROM pg_database WHERE datname = 'app_db'
+        );
+
+    # ── Script 3: Role hierarchy ─────────────────────────────────────────────
+    - id: 3
+      name: create-roles
+      database: postgres
+      user: postgres
+      script: |
+        -- DBA role: platform-team superuser.
+        -- NOLOGIN base role; individual DBA accounts are granted this role.
+        -- This way revoking access is done by removing the grant, not deleting
+        -- the user, which preserves ownership of objects.
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'dba') THEN
+            CREATE ROLE dba SUPERUSER LOGIN;
+            -- Password is set post-deployment by scripts/create-pg-superuser.sh
+          END IF;
+        END $$;
+
+        -- Application role: read/write on app_db only.
+        -- No SUPERUSER, no CREATEDB, no CREATEROLE.
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
+            CREATE ROLE app_user LOGIN;
+          END IF;
+        END $$;
+
+        -- Read-only role: analysts, BI tools, data science.
+        -- Uses the replica service endpoint for load distribution.
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'readonly') THEN
+            CREATE ROLE readonly LOGIN;
+          END IF;
+        END $$;
+
+        -- Monitoring role: Prometheus postgres_exporter.
+        -- pg_monitor is a built-in PostgreSQL role that grants read access to
+        -- all pg_stat_* views without superuser. Safe to expose to monitoring infra.
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'monitoring') THEN
+            CREATE ROLE monitoring LOGIN;
+          END IF;
+        END $$;
+        GRANT pg_monitor TO monitoring;
+
+    # ── Script 4: App database permissions ───────────────────────────────────
+    - id: 4
+      name: configure-app-db-permissions
+      database: app_db
+      user: postgres
+      script: |
+        -- Grant connect to app_user and readonly
+        GRANT CONNECT ON DATABASE app_db TO app_user, readonly;
+
+        -- Default privileges: future tables/sequences created by postgres are
+        -- accessible to app_user (rw) and readonly (r). This means dev teams
+        -- don't need to run GRANT after every migration.
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
+
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user;
+
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT SELECT ON TABLES TO readonly;
+
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT USAGE, SELECT ON SEQUENCES TO readonly;
+
+        -- pg_stat_statements needs to be enabled per-database too
+        CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

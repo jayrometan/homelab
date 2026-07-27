@@ -1,0 +1,28 @@
+# clusters/jay1/stackgres-cluster.yaml
+#
+# Flux Kustomization that deploys the production-grade Postgres cluster.
+# It depends on stackgres-operator — Flux will not attempt to apply cluster
+# resources until the operator Kustomization reports Ready (i.e., the
+# HelmRelease is installed and CRDs exist).
+#
+# Production pattern: keep operator and cluster as separate Kustomizations so
+# the operator can be upgraded independently without touching cluster state.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: stackgres-cluster
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/stackgres/cluster
+  prune: true
+  # Critical: cluster resources (SGCluster etc.) require StackGres CRDs to
+  # exist before apply. dependsOn enforces that ordering — Flux applies
+  # stackgres-operator first and waits for it to be Ready.
+  dependsOn:
+    - name: stackgres-operator
+  wait: true
+  timeout: 10m

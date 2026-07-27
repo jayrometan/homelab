@@ -1,0 +1,97 @@
+# infrastructure/stackgres/operator/helmrelease.yaml
+#
+# Deploys the StackGres operator via Flux HelmRelease.
+#
+# Version pinned to 1.18.8 — the latest patch of the 1.18 line. In a real
+# firm this would be promoted from staging → production after validation.
+# Update the version here (PR + review) and Flux upgrades the operator
+# automatically. Never run `helm upgrade` by hand against production.
+#
+# The operator installs:
+#   - stackgres-operator Deployment (the main reconciler)
+#   - stackgres-restapi Deployment (REST API + Admin UI)
+#   - All StackGres CRDs (SGCluster, SGInstanceProfile, SGPostgresConfig, etc.)
+#   - ClusterRoles + ClusterRoleBindings (operator is cluster-scoped)
+#   - Mutating + Validating webhook configurations
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stackgres-operator
+  namespace: stackgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database-operator
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: stackgres-operator
+      version: "1.18.8"
+      sourceRef:
+        kind: HelmRepository
+        name: stackgres-charts
+        namespace: stackgres
+      # Flux re-checks the chart source every 30 minutes. Pin the version
+      # above to prevent silent upgrades — only bump it deliberately.
+      interval: 30m
+
+  # Helm install/upgrade timeout. StackGres images are several hundred MB;
+  # on a first pull this can take 5+ minutes on a slow link.
+  timeout: 15m
+
+  # Rollback if the upgrade fails. Prevents a half-upgraded operator from
+  # breaking running clusters.
+  upgrade:
+    remediation:
+      remediateLastFailure: true
+  install:
+    remediation:
+      retries: 3
+
+  values:
+    # ── Operator ────────────────────────────────────────────────────────────
+    operator:
+      # Resources for the operator controller itself. In production with many
+      # clusters, bump to 500m/512Mi. For a homelab single cluster, 200m/256Mi
+      # is sufficient.
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    # ── Admin UI (REST API) ─────────────────────────────────────────────────
+    # The web UI at https://<external-ip>:443 lets platform engineers and DBAs
+    # inspect cluster state, run operations, view logs, and trigger backups
+    # without kubectl. Expose it as LoadBalancer so it's reachable from the
+    # office network. Cilium LB-IPAM assigns the IP from homelab-pool.
+    #
+    # Production note: in a real firm this would sit behind an ingress with
+    # OIDC auth (Okta/Entra). For the homelab it is direct TLS with the
+    # built-in self-signed cert.
+    adminui:
+      service:
+        type: LoadBalancer
+        # Uncomment to pin the IP (must be in your LB-IPAM pool):
+        # loadBalancerIP: "192.168.1.243"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+    # ── Prometheus integration ──────────────────────────────────────────────
+    # Set to true if you have a Prometheus Operator (ServiceMonitor CRD) in
+    # the cluster. StackGres will auto-create ServiceMonitors for every cluster.
+    # For the homelab we skip this to avoid CRD dependency.
+    prometheus:
+      allowAutodiscovery: false
+
+    # ── Grafana integration ─────────────────────────────────────────────────
+    # Auto-import StackGres dashboards into Grafana when enabled.
+    grafana:
+      autoDiscoverDashboards: false

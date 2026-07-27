@@ -1,0 +1,21 @@
+# infrastructure/stackgres/operator/helmrepository.yaml
+#
+# Flux HelmRepository source — tells Flux where to pull the StackGres
+# Helm chart from. Flux's source-controller fetches and caches the index
+# every 30 minutes, so chart updates are picked up automatically without
+# manual `helm repo update`.
+#
+# This is a one-time platform setup. All StackGres HelmReleases in the
+# cluster reference this single source object.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: stackgres-charts
+  namespace: stackgres          # must be in the same namespace as the HelmRelease
+  labels:
+    app.kubernetes.io/managed-by: flux
+spec:
+  # Official OnGres distribution channel. This URL serves the Helm chart
+  # index and chart tarballs.
+  url: https://stackgres.io/downloads/stackgres-k8s/stackgres/helm/
+  interval: 30m

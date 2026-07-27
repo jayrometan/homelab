@@ -1,0 +1,17 @@
+# infrastructure/stackgres/operator/namespace.yaml
+#
+# StackGres operator lives in its own namespace. The operator has cluster-wide
+# RBAC (it creates/reads/patches resources in any namespace where SGClusters
+# live), but isolating it in its own namespace keeps it clearly identifiable
+# and makes RBAC audits easier.
+#
+# Production note: apply a ResourceQuota here if your platform team wants to
+# cap operator resource usage and prevent runaway reconcile loops from
+# impacting other workloads.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stackgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database-operator

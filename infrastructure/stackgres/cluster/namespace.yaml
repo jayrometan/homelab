@@ -1,0 +1,18 @@
+# infrastructure/stackgres/cluster/namespace.yaml
+#
+# Dedicated namespace for the Postgres cluster. Keeping clusters in their own
+# namespace (separate from the operator) is a hard requirement at most firms:
+# - RBAC is scoped: only platform-team and the app team can access this ns
+# - Network policies can restrict who can reach the DB services
+# - ResourceQuotas prevent any one team's DB from consuming all storage
+#
+# In a multi-team company you would have one namespace per team/environment:
+#   postgres-quant, postgres-risk, postgres-analytics, etc.
+# For the homelab we use a single 'postgres' namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database

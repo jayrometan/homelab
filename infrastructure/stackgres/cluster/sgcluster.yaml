@@ -1,0 +1,139 @@
+# infrastructure/stackgres/cluster/sgcluster.yaml
+#
+# SGCluster — the core object. One SGCluster = one Patroni-managed Postgres HA
+# cluster. Everything else (SGInstanceProfile, SGPostgresConfig, etc.) is
+# configuration referenced by this object.
+#
+# StackGres creates from this:
+#   - StatefulSet with <instances> pods (each a full sidecar stack)
+#   - Services:
+#       <name>          → primary read/write (port 5432, direct Postgres)
+#       <name>-replicas → replica read (port 5432, direct Postgres)
+#       <name>-pooler   → PgBouncer (port 5432) ← APPS MUST USE THIS
+#   - Secrets:
+#       <name>          → superuser-username, superuser-password,
+#                         replication-username, replication-password
+#   - ConfigMaps, PVCs, Patroni config, PgBouncer config
+#
+# Homelab vs Production note:
+#   instances: 1  ← homelab (single node, can't schedule 3 pods on 1 node
+#                   without soft anti-affinity — which we use in production)
+#   instances: 3  ← production (1 primary + 2 hot standbys for HA)
+#
+# The rest of the config is production-grade regardless of instance count.
+apiVersion: stackgres.io/v1
+kind: SGCluster
+metadata:
+  name: primary
+  namespace: postgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database
+    # Used by monitoring (PodMonitor selector) and network policies
+    stackgres.io/cluster: "true"
+  annotations:
+    # Document the team/service that owns this cluster.
+    # In a real firm this would link to your CMDB or service catalogue.
+    app.kubernetes.io/owner: "platform-team"
+    app.kubernetes.io/description: "Primary OLTP cluster. Apps connect via primary-pooler:5432."
+spec:
+  # ── Instance count ──────────────────────────────────────────────────────────
+  # Homelab: 1 (single node). Production: 3 (1 primary + 2 sync/async standbys).
+  #
+  # With 3 instances, Patroni requires at least 2 healthy members to elect a
+  # primary (quorum). Losing 2 of 3 nodes causes an election stalemate and the
+  # cluster goes read-only. This is intentional split-brain protection.
+  instances: 1               # production: 3
+
+  # ── Postgres version ────────────────────────────────────────────────────────
+  postgres:
+    version: "16"            # PostgreSQL 16 (latest stable as of 2025-2026)
+    # Extensions to install on every instance. StackGres downloads them from
+    # its extension repository and includes them in the pod image.
+    # For homelab we keep the list minimal; production clusters would add:
+    #   - pg_partman (partition management)
+    #   - timescaledb (time-series, if needed)
+    #   - pgvector (vector similarity search, AI/ML workloads)
+    extensions: []
+
+  # ── Pod / storage ────────────────────────────────────────────────────────────
+  pods:
+    persistentVolume:
+      # PVC size for the Postgres data directory. This is per-instance.
+      # local-path provisioner does NOT support volume expansion — size correctly.
+      # Production on a proper CSI driver (Weka, Ceph, etc.): start at 500Gi,
+      # enable volume expansion in the StorageClass.
+      size: "20Gi"           # production: "500Gi"
+      storageClass: local-path  # production: "weka-block" or equivalent fast-block CSI
+
+    # Pod scheduling — production pods use soft anti-affinity so Kubernetes
+    # *prefers* spreading across nodes but doesn't hard-block if only one node
+    # is available (useful during node maintenance when you accept reduced HA).
+    # Uncomment for production multi-node clusters:
+    #
+    # scheduling:
+    #   affinity:
+    #     podAntiAffinity:
+    #       preferredDuringSchedulingIgnoredDuringExecution:
+    #       - weight: 100
+    #         podAffinityTerm:
+    #           labelSelector:
+    #             matchLabels:
+    #               app: StackGresCluster
+    #               stackgres.io/cluster-name: primary
+    #           topologyKey: kubernetes.io/hostname
+
+  # ── Configuration references ────────────────────────────────────────────────
+  # These objects must exist in the same namespace before the SGCluster is created.
+  # Flux's dependsOn in stackgres-cluster.yaml guarantees the operator is up,
+  # but these config objects are applied in the same Kustomization — order is
+  # handled by kustomize's resource ordering (namespace → profiles → cluster).
+  configurations:
+    sgInstanceProfile: production      # CPU/memory from sginstanceprofile.yaml
+    sgPostgresConfig: production-pg16  # postgresql.conf from sgpostgresconfig.yaml
+    sgPoolingConfig: production-pgbouncer  # PgBouncer from sgpoolingconfig.yaml
+
+  # ── Services (LoadBalancer via Cilium LB-IPAM) ───────────────────────────────
+  # Cilium's LB-IPAM assigns IPs from the homelab-pool (192.168.1.240/28).
+  # The primary service gets a routable IP from the pool automatically.
+  #
+  # Production access pattern:
+  #   Applications        → primary-pooler:5432   (PgBouncer, always use this)
+  #   DBA emergency access → primary:5432          (direct Postgres, LoadBalancer)
+  #   Read-only analytics  → primary-replicas:5432 (direct replicas, ClusterIP only)
+  postgresServices:
+    primary:
+      # Direct Postgres service — LoadBalancer for external DBA access.
+      # Normally apps never connect here; this is for DBA psql sessions and
+      # pg_dump from outside the cluster.
+      type: LoadBalancer
+      # Uncomment to request a specific IP from the LB-IPAM pool:
+      # annotations:
+      #   "lbipam.cilium.io/ips": "192.168.1.242"
+
+    replicas:
+      # Replica service — ClusterIP only. Read-only queries from BI tools or
+      # analytics pods running inside the cluster. No external LoadBalancer
+      # needed; internal DNS resolves primary-replicas.postgres.svc.cluster.local.
+      #
+      # In production you might set type: LoadBalancer here too if your BI
+      # team needs to connect from outside the cluster (e.g., from Tableau Desktop).
+      type: ClusterIP
+      enabled: true    # set false if instances: 1 (no replicas to route to)
+
+  # ── Managed SQL (initialisation scripts) ─────────────────────────────────────
+  # SGScript 'init-database' runs on first boot. Creates databases, roles,
+  # grants, and enables extensions. Never re-runs after initial apply.
+  managedSql:
+    scripts:
+      - id: 1
+        sgScript: init-database
+
+  # ── Distributed logs ─────────────────────────────────────────────────────────
+  # SGDistributedLogs aggregates Postgres, Patroni, and PgBouncer logs from all
+  # instances into a central Postgres-compatible log database. DBAs can query
+  # logs with SQL. Production clusters at MacDonalds would reference one here.
+  # Disabled for homelab to save resources.
+  #
+  # distributedLogs:
+  #   sgDistributedLogs: platform-logs   # must exist in same namespace

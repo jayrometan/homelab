@@ -1,0 +1,126 @@
+# infrastructure/stackgres/cluster/sgpostgresconfig.yaml
+#
+# SGPostgresConfig — postgresql.conf settings managed as a Kubernetes CRD.
+#
+# StackGres translates this object into Patroni's dynamic configuration and
+# applies it across all cluster instances without a restart (where possible).
+# Settings requiring restart are applied at the next planned restart (SGDbOps).
+#
+# Tuning philosophy for a 2000-person OLTP firm:
+#   - max_connections kept low (200) because PgBouncer handles client-side
+#     multiplexing. Postgres itself never needs more than default_pool_size
+#     × number-of-databases connections from PgBouncer.
+#   - shared_buffers at 25% of instance RAM. At 4Gi total: 1GB. At 16Gi: 4GB.
+#   - effective_cache_size = OS page cache estimate = 75% of RAM. Planner uses
+#     this to decide whether index scans are cheaper than sequential scans.
+#   - work_mem is PER SORT OPERATION PER SESSION. With 200 connections and
+#     complex queries, 32MB × 200 = 6.4GB worst case. Keep it conservative
+#     and let sessions override with SET work_mem = '256MB' when needed.
+#   - random_page_cost: 1.1 (SSD). Default is 4.0 (spinning disk). Getting
+#     this wrong on SSDs makes the planner choose sequential scans over
+#     index scans unnecessarily — a common production performance bug.
+#   - wal_level: replica — required for streaming replication to standbys.
+#   - synchronous_commit: on — safe default. For latency-critical workloads
+#     where you can tolerate ~30ms data loss window, set to 'off'.
+#     NEVER set to 'off' on a database used for financial settlement.
+apiVersion: stackgres.io/v1
+kind: SGPostgresConfig
+metadata:
+  name: production-pg16
+  namespace: postgres
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: database
+spec:
+  postgresVersion: "16"
+  postgresql.conf:
+    # ── Connections ─────────────────────────────────────────────────────────
+    # Low because PgBouncer multiplexes. If you connect apps directly (bypassing
+    # the pooler service), you WILL hit this limit under load. Don't do that.
+    max_connections: "200"             # production: "200"
+
+    # ── Memory ──────────────────────────────────────────────────────────────
+    # shared_buffers: PostgreSQL's own buffer pool. 25% of RAM is the standard
+    # starting point. Tune up if pg_stat_bgwriter shows high buffers_clean.
+    shared_buffers: "1GB"             # production (16Gi RAM): "4GB"
+
+    # effective_cache_size: planner hint about how much the OS will cache.
+    # Does not allocate memory — purely advisory for query plan decisions.
+    effective_cache_size: "3GB"       # production (16Gi RAM): "12GB"
+
+    # maintenance_work_mem: used by VACUUM, CREATE INDEX, ALTER TABLE ADD FK.
+    # Higher = faster vacuum and index builds at the cost of RAM during ops.
+    maintenance_work_mem: "256MB"     # production: "1GB"
+
+    # work_mem: per sort/hash operation. Multiple can run per query per session.
+    # Keep conservative; sessions can SET work_mem = '256MB' for heavy analytics.
+    work_mem: "32MB"                  # production: "64MB"
+
+    # ── Write-ahead log ──────────────────────────────────────────────────────
+    # wal_level=replica: required for streaming replication. 'logical' if you
+    # need logical replication (Debezium CDC, pglogical, etc.)
+    wal_level: "replica"
+
+    # wal_buffers: in-memory buffer for WAL writes. -1 = 1/32 of shared_buffers
+    # (auto). Explicit 32MB avoids the math and is rarely wrong.
+    wal_buffers: "32MB"
+
+    # checkpoint_completion_target: spread checkpoint writes over this fraction
+    # of the checkpoint interval. 0.9 = spread writes, reduce I/O spikes.
+    checkpoint_completion_target: "0.9"
+
+    # min/max_wal_size: PostgreSQL recycles WAL segments between these bounds.
+    # Large min_wal_size = fewer WAL segment creation/deletion cycles.
+    min_wal_size: "1GB"
+    max_wal_size: "4GB"              # production: "8GB"
+
+    # synchronous_commit: 'on' = wait for WAL flush before confirming commit.
+    # Safe default. Set 'off' only for known-acceptable-loss workloads.
+    synchronous_commit: "on"
+
+    # ── Planner ─────────────────────────────────────────────────────────────
+    default_statistics_target: "100" # more frequent autovacuum analyze = better plans
+
+    # SSD-tuned: random I/O is cheap on NVMe/SSD. Tells the planner to
+    # prefer index scans over seq scans more aggressively.
+    random_page_cost: "1.1"          # HDD default is 4.0
+    effective_io_concurrency: "200"  # NVMe: up to 1000; SATA SSD: 200
+
+    # ── Parallelism ──────────────────────────────────────────────────────────
+    max_worker_processes: "8"
+    max_parallel_workers: "8"
+    max_parallel_workers_per_gather: "4"  # per query, for parallel seq scans
+    max_parallel_maintenance_workers: "4" # for CREATE INDEX, VACUUM
+
+    # ── Replication ──────────────────────────────────────────────────────────
+    # hot_standby: allow read queries on standby replicas
+    hot_standby: "on"
+
+    # wal_log_hints: required for pg_rewind (used by Patroni after failover
+    # to re-sync the old primary as a new replica without a full base backup)
+    wal_log_hints: "on"
+
+    # max_wal_senders: maximum concurrent streaming replication connections.
+    # 2 replicas + 1 backup + 1 pg_rewind slot + buffer = 10 is plenty.
+    max_wal_senders: "10"
+
+    # max_replication_slots: logical and physical replication slots.
+    # Each replica uses one slot. Add extras for CDC tools (Debezium, etc.)
+    max_replication_slots: "10"
+
+    # ── Logging ──────────────────────────────────────────────────────────────
+    # Log slow queries. 1000ms (1s) is a reasonable starting threshold.
+    # In production you may drop to 250ms and feed output into a slow-query
+    # dashboard. Fluent-bit sidecars ship these logs automatically.
+    log_min_duration_statement: "1000"   # ms; -1 to disable
+
+    # Log lock waits longer than this (deadlock analysis)
+    log_lock_waits: "on"
+    deadlock_timeout: "1s"
+
+    # ── Extensions ───────────────────────────────────────────────────────────
+    # pg_stat_statements: essential for performance analysis. Records per-query
+    # stats (calls, total_time, rows). Used by DBA dashboards and pgBadger.
+    shared_preload_libraries: "pg_stat_statements"
+    pg_stat_statements.max: "10000"
+    pg_stat_statements.track: "all"
