@@ -93,12 +93,9 @@ spec:
     max_parallel_maintenance_workers: "4" # for CREATE INDEX, VACUUM
 
     # ── Replication ──────────────────────────────────────────────────────────
-    # hot_standby: allow read queries on standby replicas
-    hot_standby: "on"
-
-    # wal_log_hints: required for pg_rewind (used by Patroni after failover
-    # to re-sync the old primary as a new replica without a full base backup)
-    wal_log_hints: "on"
+    # hot_standby is managed by Patroni — do not set here.
+    # wal_log_hints is on the StackGres blocklist — Patroni manages it
+    # internally for pg_rewind. Do not set here.
 
     # max_wal_senders: maximum concurrent streaming replication connections.
     # 2 replicas + 1 backup + 1 pg_rewind slot + buffer = 10 is plenty.
