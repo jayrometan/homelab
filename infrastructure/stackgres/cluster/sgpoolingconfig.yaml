@@ -23,8 +23,14 @@
 #
 # For a 2000-person firm running standard web/API workloads: transaction mode.
 # If your app uses prepared statements (common in Java ORMs): either use
-# session mode, or configure `server_reset_query = DISCARD ALL` and set
-# `ignore_startup_parameters = extra_float_digits,options` in pgbouncer.ini.
+# session mode, or configure server_reset_query = DISCARD ALL and set
+# ignore_startup_parameters = extra_float_digits,options in pgbouncer.ini.
+#
+# ── StackGres 1.19.0 CRD structure ─────────────────────────────────────────
+# The pgbouncer.ini key has three sub-sections: pgbouncer, databases, users.
+# Global PgBouncer settings go under pgbouncer.ini.pgbouncer (the [pgbouncer]
+# ini section). Database-specific settings go under pgbouncer.ini.databases.
+# User-specific overrides go under pgbouncer.ini.users.
 apiVersion: stackgres.io/v1
 kind: SGPoolingConfig
 metadata:
@@ -36,66 +42,68 @@ metadata:
 spec:
   pgBouncer:
     pgbouncer.ini:
-      # ── Pool behaviour ──────────────────────────────────────────────────
-      pool_mode: transaction
+      # [pgbouncer] section — global PgBouncer settings
+      pgbouncer:
+        # ── Pool behaviour ────────────────────────────────────────────────
+        pool_mode: transaction
 
-      # Total application connections PgBouncer will accept.
-      # With 2000 employees and many service replicas, you need headroom.
-      # 1000 client connections → 25 actual Postgres connections per database.
-      max_client_conn: "1000"        # production: "2000"
+        # Total application connections PgBouncer will accept.
+        # With 2000 employees and many service replicas, you need headroom.
+        # 1000 client connections → 25 actual Postgres connections per database.
+        max_client_conn: 1000        # production: 2000
 
-      # Actual Postgres connections maintained per (database, user) pair.
-      # This is what Postgres sees as active connections. Keep this well
-      # below max_connections in SGPostgresConfig.
-      default_pool_size: "25"       # production: "50"
+        # Actual Postgres connections maintained per (database, user) pair.
+        # This is what Postgres sees as active connections. Keep this well
+        # below max_connections in SGPostgresConfig.
+        default_pool_size: 25        # production: 50
 
-      # Pool kept warm when idle — avoids connection setup latency on sudden
-      # traffic spikes.
-      min_pool_size: "5"
+        # Pool kept warm when idle — avoids connection setup latency on sudden
+        # traffic spikes.
+        min_pool_size: 5
 
-      # Emergency overflow connections. Only used when all pool connections
-      # are busy. PgBouncer waits reserve_pool_timeout seconds before using
-      # reserve connections.
-      reserve_pool_size: "10"
-      reserve_pool_timeout: "3"     # seconds
+        # Emergency overflow connections. Only used when all pool connections
+        # are busy. PgBouncer waits reserve_pool_timeout seconds before
+        # using reserve connections.
+        reserve_pool_size: 10
+        reserve_pool_timeout: 3      # seconds before promoting reserve connections
 
-      # Maximum Postgres connections across all pools in this PgBouncer instance.
-      # Acts as a hard cap regardless of per-pool settings.
-      max_db_connections: "100"     # production: "150"
+        # Maximum Postgres connections across all pools in this PgBouncer instance.
+        # Acts as a hard cap regardless of per-pool settings.
+        max_db_connections: 100      # production: 150
 
-      # ── Timeouts ────────────────────────────────────────────────────────
-      # Drop idle SERVER connections after this many seconds of inactivity.
-      # Prevents Postgres from accumulating idle connections from scaled-down
-      # PgBouncer instances.
-      server_idle_timeout: "600"    # 10 minutes
+        # ── Timeouts ──────────────────────────────────────────────────────
+        # Drop idle SERVER connections after this many seconds of inactivity.
+        # Prevents Postgres from accumulating idle connections from scaled-down
+        # PgBouncer instances.
+        server_idle_timeout: 600     # 10 minutes
 
-      # 0 = never drop idle CLIENT connections.
-      # Set a non-zero value if you have connection-leaking clients.
-      client_idle_timeout: "0"
+        # 0 = never drop idle CLIENT connections.
+        # Set a non-zero value if you have connection-leaking clients.
+        client_idle_timeout: 0
 
-      # Close idle Postgres connections that haven't been used for this long.
-      server_lifetime: "3600"       # 1 hour; recycles connections to prevent stale state
+        # Close idle Postgres connections that have not been used for this long.
+        server_lifetime: 3600        # 1 hour; recycles connections to prevent stale state
 
-      # How long to wait for a server connection before returning an error
-      # to the client.
-      server_connect_timeout: "15"
+        # How long to wait for a server connection before returning an error
+        # to the client.
+        server_connect_timeout: 15
 
-      # ── Authentication ───────────────────────────────────────────────────
-      # auth_type=scram-sha-256 is the secure default in PostgreSQL 14+.
-      # md5 is accepted but considered legacy. plain is never acceptable.
-      auth_type: "scram-sha-256"
+        # ── Authentication ────────────────────────────────────────────────
+        # auth_type=scram-sha-256 is the secure default in PostgreSQL 14+.
+        # md5 is accepted but considered legacy. plain is never acceptable.
+        auth_type: scram-sha-256
 
-      # ── Observability ────────────────────────────────────────────────────
-      # Log connections and disconnections. In production with high churn,
-      # this produces enormous log volume. Disable for performance.
-      log_connections: "0"
-      log_disconnections: "0"
-      log_pooler_errors: "1"       # always log pooler errors (connection failures etc.)
+        # ── Observability ─────────────────────────────────────────────────
+        # Log connections and disconnections. In production with high churn,
+        # this produces enormous log volume. Disable for performance.
+        log_connections: 0
+        log_disconnections: 0
+        log_pooler_errors: 1         # always log pooler errors (connection failures etc.)
 
-      # Emit stats every N seconds (to log and SHOW STATS command).
-      stats_period: "60"
+        # Emit stats every N seconds (to log and SHOW STATS command).
+        stats_period: 60
 
-      # ── Application compatibility ────────────────────────────────────────
-      # Some clients send extra parameters on startup that PgBouncer doesn't
-      # recognize. List them here to avoid "unsupported startup parameter" errors.
-      ignore_startup_parameters: "extra_float_digits,options"
+        # ── Application compatibility ──────────────────────────────────────
+        # Some clients send extra parameters on startup that PgBouncer does not
+        # recognize. List them here to avoid unsupported startup parameter errors.
+        ignore_startup_parameters: extra_float_digits,options
