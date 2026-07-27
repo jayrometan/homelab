@@ -5,13 +5,11 @@ metadata:
   namespace: podinfo
 spec:
   parentRefs:
-  - name: homelab-gateway     # attach to the Gateway above
+  - name: homelab-gateway
     namespace: podinfo
+  hostnames:
+  - podinfo.homelab.local
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /
-    backendRefs:
+  - backendRefs:
     - name: podinfo
       port: 9898
