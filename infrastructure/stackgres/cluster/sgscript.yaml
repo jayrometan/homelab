@@ -64,10 +64,13 @@ spec:
       script: |
         -- The primary application database. In production you may have several:
         -- app_db (OLTP), reporting_db (read replicas), audit_db (append-only).
-        SELECT 'CREATE DATABASE app_db'
-        WHERE NOT EXISTS (
-          SELECT FROM pg_database WHERE datname = 'app_db'
-        );
+        -- Use EXECUTE inside a DO block — plain SELECT does not execute DDL.
+        DO 45233
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'app_db') THEN
+            EXECUTE 'CREATE DATABASE app_db';
+          END IF;
+        END 45233;
 
     # ── Script 3: Role hierarchy ─────────────────────────────────────────────
     - id: 3
