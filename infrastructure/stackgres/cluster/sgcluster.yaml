@@ -88,8 +88,10 @@ spec:
   # Flux's dependsOn in stackgres-cluster.yaml guarantees the operator is up,
   # but these config objects are applied in the same Kustomization — order is
   # handled by kustomize's resource ordering (namespace → profiles → cluster).
+  # sgInstanceProfile moved to spec level in StackGres 1.19.0
+  sgInstanceProfile: production        # CPU/memory from sginstanceprofile.yaml
+
   configurations:
-    sgInstanceProfile: production      # CPU/memory from sginstanceprofile.yaml
     sgPostgresConfig: production-pg16  # postgresql.conf from sgpostgresconfig.yaml
     sgPoolingConfig: production-pgbouncer  # PgBouncer from sgpoolingconfig.yaml
 
