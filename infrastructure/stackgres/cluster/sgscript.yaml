@@ -39,9 +39,9 @@ metadata:
     app.kubernetes.io/managed-by: flux
     app.kubernetes.io/component: database
 spec:
-  # continueOnSGScriptError: false means if any script fails, the sequence
+  # continueOnError: false means if any script fails, the sequence
   # stops. This is safe here because all scripts are idempotent (IF NOT EXISTS).
-  continueOnSGScriptError: false
+  continueOnError: false
   scripts:
     # ── Script 1: Extensions ─────────────────────────────────────────────────
     # Enable pg_stat_statements on the postgres database so it tracks queries
