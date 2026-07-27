@@ -83,15 +83,3 @@ spec:
         limits:
           cpu: 200m
           memory: 256Mi
-
-    # ── Prometheus integration ──────────────────────────────────────────────
-    # Set to true if you have a Prometheus Operator (ServiceMonitor CRD) in
-    # the cluster. StackGres will auto-create ServiceMonitors for every cluster.
-    # For the homelab we skip this to avoid CRD dependency.
-    prometheus:
-      allowAutodiscovery: false
-
-    # ── Grafana integration ─────────────────────────────────────────────────
-    # Auto-import StackGres dashboards into Grafana when enabled.
-    grafana:
-      autoDiscoverDashboards: false
