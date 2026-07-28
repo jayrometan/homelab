@@ -1,6 +1,6 @@
 # StackGres Production Deployment via Flux
 
-> Deployed: 2026-07-27 on jay1 (192.168.1.25), k3s v1.36.2, Cilium 1.19.5, Flux v2, StackGres 1.18.8
+> Deployed: 2026-07-27 on jay1 (192.168.1.25), k3s v1.36.2, Cilium 1.19.5, Flux v2, StackGres 1.19.0
 
 This document captures every decision, step, and YAML involved in deploying a
 production-grade StackGres PostgreSQL cluster via GitOps. It is written for a
@@ -698,3 +698,481 @@ instead of 500Gi).
 **Secrets never in Git**: passwords are generated and stored in Kubernetes
 Secrets by `scripts/create-pg-superuser.sh`. The script can be re-run for
 password rotation. Applications reference secrets by name, not by value.
+
+
+---
+
+## Upgrade Notes: StackGres 1.18.x → 1.19.0 (k3s 1.36 Compatibility)
+
+> This section documents every schema error hit during the actual deployment on
+> k3s v1.36.2. If you are deploying StackGres 1.19.0 fresh, read this before
+> writing any manifests — it will save hours.
+
+### Why 1.19.0?
+
+StackGres 1.19.0 ships with `kubeVersion: 1.18.0-0 - 1.35.x-O` in its Helm
+chart. k3s v1.36.2 falls outside that range and the HelmRelease fails with:
+
+```
+chart requires kubeVersion: 1.18.0-0 - 1.35.x-O which is incompatible
+with Kubernetes v1.36.2+k3s1
+```
+
+StackGres 1.19.0 raised the ceiling to `1.25.0-0 - 1.36.x-0`. Change the
+HelmRelease chart version to `"1.19.0"` to fix this.
+
+---
+
+### Six CRD Schema Breaking Changes in 1.19.0
+
+Each of these caused a Flux dry-run failure on the actual cluster, in this order:
+
+---
+
+#### 1. SGConfig — removed grafana/prometheus fields
+
+**Error:**
+```
+SGConfig in version "v1" cannot be handled as a SGConfig: strict decoding
+error: unknown field "spec.grafana.autoDiscoverDashboards",
+unknown field "spec.prometheus.allowAutodiscovery"
+```
+
+**Root cause:** These fields existed in SGConfig 1.18.x but were removed from
+the CRD schema in 1.19.0. The Helm chart install job creates an SGConfig and
+the API server rejects it.
+
+**Fix:** Remove both from HelmRelease `values:`:
+
+```yaml
+# REMOVE from helmrelease.yaml values (not in 1.19.0 schema):
+#   grafana:
+#     autoDiscoverDashboards: false
+#   prometheus:
+#     allowAutodiscovery: false
+```
+
+The 1.19.0 equivalents live under `spec.observability` in SGConfig.
+
+---
+
+#### 2. SGPoolingConfig — pgbouncer settings must be nested
+
+**Error:**
+```
+SGPoolingConfig dry-run failed:
+.spec.pgBouncer.pgbouncer.ini.reserve_pool_timeout: field not declared in schema
+```
+
+**Root cause:** The CRD restructured `pgbouncer.ini` in 1.19.0. It now has
+three explicit sub-sections — `pgbouncer`, `databases`, `users` — matching the
+three sections of an actual pgbouncer.ini file. Global settings must go under
+`pgbouncer.ini.pgbouncer`, not flat under `pgbouncer.ini`.
+
+**Wrong (1.18.x style):**
+```yaml
+spec:
+  pgBouncer:
+    pgbouncer.ini:
+      pool_mode: transaction
+      max_client_conn: "1000"
+      reserve_pool_timeout: "3"
+```
+
+**Correct (1.19.0):**
+```yaml
+spec:
+  pgBouncer:
+    pgbouncer.ini:
+      pgbouncer:            # <-- one level deeper
+        pool_mode: transaction
+        max_client_conn: 1000
+        default_pool_size: 25
+        min_pool_size: 5
+        reserve_pool_size: 10
+        reserve_pool_timeout: "3"
+        max_db_connections: 100
+        server_idle_timeout: "600"
+        server_lifetime: "3600"
+        server_connect_timeout: "15"
+        auth_type: scram-sha-256
+        log_connections: "0"
+        log_pooler_errors: "1"
+        stats_period: "60"
+        ignore_startup_parameters: extra_float_digits,options
+```
+
+The `pgbouncer` sub-section has `additionalProperties: true` in the CRD, so
+any standard PgBouncer setting is accepted there. Inspect the live schema:
+
+```bash
+kubectl get crd sgpoolconfigs.stackgres.io -o json \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+ini = (d['spec']['versions'][0]['schema']['openAPIV3Schema']
+       ['properties']['spec']['properties']['pgBouncer']
+       ['properties']['pgbouncer.ini'])
+print(json.dumps(ini, indent=2))
+"
+```
+
+---
+
+#### 3. SGCluster — sgInstanceProfile moved to spec level
+
+**Error:**
+```
+SGCluster dry-run failed:
+.spec.configurations.sgInstanceProfile: field not declared in schema
+```
+
+**Root cause:** In 1.19.0, `sgInstanceProfile` was promoted from
+`spec.configurations` to `spec.sgInstanceProfile` at the top level of spec.
+`sgPostgresConfig` and `sgPoolingConfig` remain inside `spec.configurations`.
+
+**Wrong (1.18.x):**
+```yaml
+spec:
+  configurations:
+    sgInstanceProfile: production
+    sgPostgresConfig: production-pg16
+    sgPoolingConfig: production-pgbouncer
+```
+
+**Correct (1.19.0):**
+```yaml
+spec:
+  sgInstanceProfile: production          # promoted to top-level
+  configurations:
+    sgPostgresConfig: production-pg16    # stays here
+    sgPoolingConfig: production-pgbouncer
+```
+
+List all allowed top-level spec fields:
+```bash
+kubectl get crd sgclusters.stackgres.io -o json \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+spec = d['spec']['versions'][0]['schema']['openAPIV3Schema']['properties']['spec']
+print(json.dumps(list(spec['properties'].keys()), indent=2))
+"
+```
+
+---
+
+#### 4. SGPostgresConfig — Patroni-managed parameters blocklisted
+
+**Error:**
+```
+admission webhook "sgpgconfig.validating-webhook.stackgres.io" denied the
+request: Invalid postgres configuration, properties: wal_log_hints cannot
+be settled
+```
+
+**Root cause:** StackGres manages several postgresql.conf parameters internally
+via Patroni. The admission webhook rejects any SGPostgresConfig that sets them.
+Confirmed blocklisted in 1.19.0:
+
+| Parameter       | Why it is managed                                       |
+|-----------------|---------------------------------------------------------|
+| `wal_log_hints` | Required for pg_rewind (old primary re-sync after failover) |
+| `hot_standby`   | Patroni controls replica read access based on cluster state |
+| `listen_addresses` | StackGres controls pod networking                    |
+| `cluster_name`  | Set by Patroni for DCS identity                         |
+
+**Fix:** Remove these from `spec.postgresql.conf` in your SGPostgresConfig.
+
+```yaml
+# REMOVE — Patroni manages these, admission webhook will block them:
+#   wal_log_hints: "on"
+#   hot_standby: "on"
+```
+
+To see what Patroni currently has set:
+```bash
+kubectl exec -n postgres primary-0 -c patroni -- \
+  patronictl -c /etc/patroni/postgres.yml show-config
+```
+
+---
+
+#### 5. SGScript — continueOnSGScriptError renamed
+
+**Error:**
+```
+SGScript dry-run failed:
+.spec.continueOnSGScriptError: field not declared in schema
+```
+
+**Fix:** Rename to `continueOnError`.
+
+```yaml
+spec:
+  continueOnError: false   # was: continueOnSGScriptError in 1.18.x
+```
+
+---
+
+#### 6. SGScript SQL — SELECT does not execute DDL; use DO/EXECUTE
+
+This is a logic bug, not a schema error. The admission webhook will not catch it.
+
+**Wrong:**
+```sql
+-- Returns the string "CREATE DATABASE app_db" as a row. Does NOT create anything.
+SELECT 'CREATE DATABASE app_db'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'app_db');
+```
+
+**Correct:**
+```sql
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'app_db') THEN
+    EXECUTE 'CREATE DATABASE app_db';
+  END IF;
+END $$;
+```
+
+**Shell quoting trap:** When writing YAML via SSH heredoc or `python3 -c` inside
+a double-quoted shell string, `$$` expands to the current process ID. A DO
+block written as `DO $$` may arrive on the server as `DO 45233`.
+
+The error is:
+```
+ERROR: syntax error at or near "45233"   Position: 219
+```
+
+**Safe transfer pattern:** Use base64 to move files with dollar signs:
+```bash
+# Encode locally, decode on server
+cat file.yaml | base64 | ssh root@server "base64 -d > /remote/path/file.yaml"
+```
+
+---
+
+### Debugging Flux Reconciliation Failures
+
+The full error path is in the `MESSAGE` column or the Kubernetes condition:
+
+```bash
+# Quick overview
+flux get kustomizations
+
+# Full error message for a specific kustomization
+kubectl get kustomization stackgres-cluster -n flux-system \
+  -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
+
+# Force reconcile after pushing a fix
+flux reconcile source git flux-system
+kubectl annotate kustomization stackgres-cluster -n flux-system \
+  reconcile.fluxcd.io/requestedAt="$(date -u +%FT%TZ)" --overwrite
+
+# Watch conditions live
+kubectl get kustomization stackgres-cluster -n flux-system -w
+```
+
+**Reading the error path:** Flux dry-run failures report the full JSON path of
+the offending field. Example:
+
+```
+.spec.pgBouncer.pgbouncer.ini.reserve_pool_timeout: field not declared in schema
+```
+
+Use that path to navigate the live CRD schema and understand what structure is
+actually expected. This is faster than reading docs that may be outdated.
+
+---
+
+### SGScript Execution and Re-run Behaviour
+
+StackGres tracks which scripts ran in `SGCluster.status.managedSql`. Check it:
+
+```bash
+kubectl get sgcluster primary -n postgres \
+  -o jsonpath='{.status.managedSql}' | python3 -m json.tool
+```
+
+The output shows each script's `id`, `version`, `completedAt`/`failedAt`, and
+any `failure` message with its Postgres error code.
+
+When `managedVersions: true` (the default), changing a script's content in the
+SGScript object causes the operator to detect the change via hash and re-run
+that script. However, if the operator is not actively watching for changes,
+annotate the SGCluster to trigger a reconcile:
+
+```bash
+kubectl annotate sgcluster primary -n postgres \
+  stackgres.io/reconciliation-pause="false" --overwrite
+```
+
+**Manual fallback via postgres-util:** If the script mechanism is stuck, run
+SQL directly. The `postgres-util` container is always present, connects via
+Unix socket (no password, no network):
+
+```bash
+# List databases
+kubectl exec -n postgres primary-0 -c postgres-util -- psql -U postgres -c "\l"
+
+# Create database
+kubectl exec -n postgres primary-0 -c postgres-util -- \
+  psql -U postgres -c "CREATE DATABASE app_db"
+
+# Connect to a specific database
+kubectl exec -n postgres primary-0 -c postgres-util -- \
+  psql -U postgres -d app_db -c "GRANT CONNECT ON DATABASE app_db TO app_user"
+
+# Run a multi-statement file
+kubectl cp ./init.sql postgres/primary-0:/tmp/init.sql -c postgres-util
+kubectl exec -n postgres primary-0 -c postgres-util -- \
+  psql -U postgres -f /tmp/init.sql
+```
+
+---
+
+### Full Verification Checklist
+
+```bash
+# 1. All four Flux kustomizations Ready at the same commit SHA
+flux get kustomizations
+
+# 2. Operator pods (operator + restapi)
+kubectl get pods -n stackgres
+
+# 3. Cluster pod — 5/5 containers (postgres, patroni, pgbouncer, exporter, fluent-bit)
+kubectl get pods -n postgres
+
+# 4. All config CRDs have objects
+kubectl get sginstanceprofile,sgpgconfig,sgpoolconfig,sgscript,sgcluster -n postgres
+
+# 5. Services — confirm LoadBalancer IP assigned
+kubectl get svc -n postgres
+
+# 6. Cluster conditions
+kubectl get sgcluster primary -n postgres \
+  -o jsonpath='{.status.conditions}' | python3 -m json.tool
+# Expect: Bootstrapped=True, Failed=False, PendingRestart=False
+
+# 7. Init scripts ran
+kubectl get sgcluster primary -n postgres \
+  -o jsonpath='{.status.managedSql}' | python3 -m json.tool
+
+# 8. Databases and roles exist
+kubectl exec -n postgres primary-0 -c postgres-util -- psql -U postgres -c "\l"
+kubectl exec -n postgres primary-0 -c postgres-util -- \
+  psql -U postgres -c "SELECT rolname, rolsuper FROM pg_roles ORDER BY rolname"
+
+# 9. Credential Secrets exist
+kubectl get secrets -n postgres | grep pg-credentials
+
+# 10. Patroni cluster health
+kubectl exec -n postgres primary-0 -c patroni -- \
+  patronictl -c /etc/patroni/postgres.yml list
+```
+
+---
+
+### Connection Reference
+
+| Service | Type | Address | Use |
+|---|---|---|---|
+| `primary` | LoadBalancer | `192.168.1.242:5432` | DBA psql, pg_dump |
+| `primary-pooler` | ClusterIP | `primary-pooler.postgres.svc:5432` | Applications (PgBouncer) |
+| `primary-replicas` | ClusterIP | `primary-replicas.postgres.svc:5432` | Read-only queries |
+| `primary-rest` | ClusterIP | `primary-rest.postgres.svc:8008` | Patroni REST API |
+
+**Get an application DSN:**
+```bash
+kubectl get secret pg-credentials-app-user -n postgres \
+  -o jsonpath='{.data.dsn}' | base64 -d
+```
+
+**Rotate a password:**
+```bash
+./scripts/create-pg-superuser.sh --rotate app_user
+```
+
+---
+
+### Day-2 Operations Quick Reference
+
+**Scale from 1 → 3 instances:**
+Edit `sgcluster.yaml`: `instances: 3`. Flux rolls out two new replica pods.
+Add pod anti-affinity to ensure they land on different nodes.
+
+**Manual failover (test HA):**
+```bash
+kubectl exec -n postgres primary-0 -c patroni -- \
+  patronictl -c /etc/patroni/postgres.yml failover primary --force
+```
+
+**PgBouncer admin console:**
+```bash
+kubectl exec -it primary-0 -n postgres -c pgbouncer -- \
+  psql -h 127.0.0.1 -p 6432 -U pgbouncer pgbouncer -c "SHOW POOLS;"
+# Commands: SHOW POOLS, SHOW CLIENTS, SHOW SERVERS, SHOW STATS, RECONNECT
+```
+
+**Check replication lag:**
+```bash
+kubectl exec -n postgres primary-0 -c postgres-util -- psql -U postgres -c "
+  SELECT application_name, state,
+         pg_wal_lsn_diff(sent_lsn, replay_lsn) AS lag_bytes
+  FROM pg_stat_replication;"
+```
+
+**Slow query analysis:**
+```bash
+kubectl exec -n postgres primary-0 -c postgres-util -- psql -U postgres -d app_db -c "
+  SELECT query, calls, total_exec_time::int, rows,
+         (total_exec_time/calls)::int AS avg_ms
+  FROM pg_stat_statements
+  ORDER BY total_exec_time DESC LIMIT 10;"
+```
+
+**Postgres config currently in effect:**
+```bash
+kubectl exec -n postgres primary-0 -c postgres-util -- psql -U postgres -c "
+  SELECT name, setting, unit, source
+  FROM pg_settings
+  WHERE source != 'default'
+  ORDER BY name;"
+```
+
+---
+
+### Conceptual Summary: Why StackGres vs Plain PostgreSQL on Kubernetes
+
+Running PostgreSQL on Kubernetes manually (StatefulSet + ConfigMap + Service)
+requires solving:
+
+| Problem | DIY effort |
+|---|---|
+| HA and automatic failover | Patroni + etcd/k8s DCS config |
+| Connection pooling | PgBouncer StatefulSet + lifecycle hooks |
+| WAL archiving and backups | Custom scripts + object storage config |
+| Secrets and TLS rotation | cert-manager integration |
+| Metrics | postgres_exporter sidecar + ServiceMonitor |
+| Log aggregation | Fluent-bit sidecar + parsing config |
+| Major version upgrades | pg_upgrade scripts, downtime planning |
+
+StackGres packages all of this. An SGCluster manifest is the equivalent of an
+RDS instance definition — you declare what you want, the operator handles how.
+
+The SGCluster pod runs these containers:
+
+| Container | Role |
+|---|---|
+| `postgres` | PostgreSQL process |
+| `patroni` | HA agent: leader election, failover, config push |
+| `pgbouncer` | Connection pooler (transaction mode) |
+| `postgres-exporter` | Prometheus `/metrics` endpoint |
+| `fluent-bit` | Structured log shipping |
+| `postgres-util` | Admin tooling: psql, pg_dump, patronictl, pg_rewind |
+
+The trade-off: StackGres adds operational complexity at the operator layer.
+The 1.18→1.19 upgrade demonstrated this — six schema changes in one release.
+In production, always test operator upgrades in staging before applying to
+production clusters.
