@@ -74,7 +74,7 @@ run_sql() {
 store_secret() {
     local user="$1"
     local password="$2"
-    local secret_name="pg-credentials-${user}"
+    local secret_name="pg-credentials-${user//_/-}"
 
     info "Storing credentials for '${user}' in Secret '${secret_name}'"
 
@@ -121,7 +121,7 @@ cmd_setup() {
         run_sql "ALTER ROLE ${user} PASSWORD '${password}';" "postgres"
 
         store_secret "${user}" "${password}"
-        info "User '${user}' configured. Secret: pg-credentials-${user}"
+        info "User '${user}' configured. Secret: pg-credentials-${user//_/-}"
     done
 
     info ""
@@ -132,7 +132,7 @@ cmd_setup() {
     info "  Port:     5432 (PgBouncer → Postgres)"
     info "  Database: app_db"
     info "  User:     app_user"
-    info "  Secret:   kubectl get secret pg-credentials-app_user -n ${NAMESPACE}"
+    info "  Secret:   kubectl get secret pg-credentials-app-user -n ${NAMESPACE}"
     info ""
     info "DBA connection (direct Postgres, not via pooler):"
     info "  Host:     ${DIRECT_SVC}.${NAMESPACE}.svc.cluster.local"
@@ -141,7 +141,7 @@ cmd_setup() {
     info "  Secret:   kubectl get secret pg-credentials-dba -n ${NAMESPACE}"
     info ""
     info "Get connection DSN:"
-    info "  kubectl get secret pg-credentials-app_user -n ${NAMESPACE} -o jsonpath='{.data.dsn}' | base64 -d"
+    info "  kubectl get secret pg-credentials-app-user -n ${NAMESPACE} -o jsonpath='{.data.dsn}' | base64 -d"
 }
 
 cmd_rotate() {
@@ -154,7 +154,7 @@ cmd_rotate() {
     info "Rotating password for '${user}'..."
     run_sql "ALTER ROLE ${user} PASSWORD '${password}';" "postgres"
     store_secret "${user}" "${password}"
-    info "Password rotated. Secret updated: pg-credentials-${user}"
+    info "Password rotated. Secret updated: pg-credentials-${user//_/-}"
 }
 
 cmd_show() {
@@ -165,11 +165,11 @@ cmd_show() {
     info ""
     info "Secrets:"
     for user in "${USERS[@]}"; do
-        echo "  pg-credentials-${user} (namespace: ${NAMESPACE})"
+        echo "  pg-credentials-${user//_/-} (namespace: ${NAMESPACE})"
     done
     info ""
     info "Get a DSN (example for app_user):"
-    info "  kubectl get secret pg-credentials-app_user -n ${NAMESPACE} \\"
+    info "  kubectl get secret pg-credentials-app-user -n ${NAMESPACE} \\"
     info "    -o jsonpath='{.data.dsn}' | base64 -d"
 }
 
