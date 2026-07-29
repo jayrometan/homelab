@@ -250,10 +250,10 @@ Install standard for production, experimental if you need TCP/UDP routing.
 
 ```bash
 # Standard channel (HTTPRoute, GRPCRoute)
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
 
 # Experimental channel (adds TCPRoute, TLSRoute, UDPRoute)
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/experimental-install.yaml
 ```
 
 ---
@@ -393,7 +393,7 @@ When you're ready (not doing it now):
 
 ```bash
 # Standard channel (sufficient for HTTP/HTTPS/gRPC)
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
 
 # Verify CRDs exist
 kubectl get crd | grep gateway.networking.k8s.io
@@ -496,7 +496,7 @@ kubectl get gateway test-gateway -n gateway-test
 # EXTERNAL-IP will be from your LB-IPAM pool
 
 # Test it
-curl http://192.168.1.100/
+curl http://192.168.1.240/
 # hello from gateway api
 ```
 
