@@ -1,8 +1,11 @@
 # Redpanda client scripts (Go / franz-go)
 
-Two small Go programs to produce to and consume from the homelab Redpanda
-cluster, meant to be run **from your MacBook** against the external NodePort
-listeners.
+Three small Go programs for the homelab Redpanda cluster, meant to be run **from
+your MacBook** against the external NodePort listeners:
+
+- `producer/` — publish random order messages
+- `consumer/` — read messages as a consumer group
+- `metadata/` — query a broker for cluster metadata (brokers + topics)
 
 ## Brokers (external NodePort access)
 
@@ -17,8 +20,8 @@ These are the defaults baked into both scripts. Plaintext, no auth (milestone 1)
 ## One-time setup
 
 ```bash
-cd scripts
-go mod tidy          # fetches franz-go and writes go.sum
+cd scripts/redpanda
+go mod tidy          # fetches franz-go + kadm and writes go.sum
 ```
 
 ## Produce random order messages
@@ -50,7 +53,24 @@ go run ./consumer -group my.reader -topic demo.orders.v1
 The 6 partitions split across the two consumer instances via cooperative
 (incremental) rebalancing. Kill one and watch its partitions move to the other.
 
-## Flags (both programs)
+## Query broker metadata
+
+Takes a **required `ip:port`** argument — the broker to bootstrap against. Prints
+the cluster id, controller, every broker's *advertised* address, and each topic's
+partitions (leader / replicas / ISR). This is exactly what a client receives at
+bootstrap, so it's the fastest way to debug advertised-listener issues (Vol 2
+§15.4): if the HOST column shows addresses your client can't reach, that's the bug.
+
+```bash
+go run ./metadata 192.168.1.25:31092                    # via broker 0 (jay1)
+go run ./metadata 192.168.1.27:31094 -topic demo.orders.v1
+go run ./metadata redpanda-0.redpanda.redpanda.svc.cluster.local.:9093  # in-cluster
+```
+
+Try it against each external address — every broker should report the *same* set
+of advertised broker addresses (`.25:31092`, `.26:31093`, `.27:31094`).
+
+## Flags
 
 | Flag | Default | Meaning |
 |---|---|---|
