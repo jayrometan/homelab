@@ -9,4 +9,3 @@ kind: Kustomization
 resources:
   - redpanda.yaml
   - topic-demo.yaml
-  - external-nodeports.yaml

@@ -35,7 +35,7 @@ import (
 
 func main() {
 	brokers := flag.String("brokers",
-		"192.168.1.25:31092,192.168.1.26:31093,192.168.1.27:31094",
+		"192.168.1.25:31092,192.168.1.26:31092,192.168.1.27:31092",
 		"comma-separated bootstrap brokers (the external NodePort addresses)")
 	topic := flag.String("topic", "demo.orders.v1", "topic to consume")
 	group := flag.String("group", "demo.orders.reader", "consumer group id")

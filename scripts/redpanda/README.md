@@ -11,8 +11,8 @@ your MacBook** against the external NodePort listeners:
 
 ```
 192.168.1.25:31092   → redpanda-0 (jay1)
-192.168.1.26:31093   → redpanda-1 (jay2)
-192.168.1.27:31094   → redpanda-2 (jay3)
+192.168.1.26:31092   → redpanda-1 (jay2)
+192.168.1.27:31092   → redpanda-2 (jay3)
 ```
 
 These are the defaults baked into both scripts. Plaintext, no auth (milestone 1).
@@ -63,12 +63,12 @@ bootstrap, so it's the fastest way to debug advertised-listener issues (Vol 2
 
 ```bash
 go run ./metadata 192.168.1.25:31092                    # via broker 0 (jay1)
-go run ./metadata 192.168.1.27:31094 -topic demo.orders.v1
+go run ./metadata 192.168.1.27:31092 -topic demo.orders.v1
 go run ./metadata redpanda-0.redpanda.redpanda.svc.cluster.local.:9093  # in-cluster
 ```
 
 Try it against each external address — every broker should report the *same* set
-of advertised broker addresses (`.25:31092`, `.26:31093`, `.27:31094`).
+of advertised broker addresses (all on the same port: `.25:31092`, `.26:31092`, `.27:31092`).
 
 ## Flags
 
