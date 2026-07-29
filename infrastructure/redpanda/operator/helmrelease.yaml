@@ -1,0 +1,55 @@
+# infrastructure/redpanda/operator/helmrelease.yaml
+#
+# Deploys the Redpanda Operator via Flux HelmRelease.
+#
+# The operator is the supported production path (Vol 1 §5.1): it reconciles a
+# `Redpanda` custom resource (cluster.redpanda.com/v1alpha2) into a StatefulSet
+# of brokers, and drives day-2 choreography — rolling restarts with maintenance
+# mode, decommission on scale-down, config application via the Admin API.
+#
+# The `operator` chart installs:
+#   - the controller-manager Deployment (the reconciler)
+#   - the CRDs: Redpanda, Topic, User, Schema, and friends
+#   - RBAC for the controller
+#
+# Version pinned to 26.2.1 (Redpanda's CalVer scheme). Bump deliberately via
+# PR + review; never `helm upgrade` by hand. The bundled redpanda cluster
+# chart/image default is chosen by this operator version.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: redpanda-operator
+  namespace: redpanda
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/component: streaming-operator
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: operator
+      version: "26.2.1"
+      sourceRef:
+        kind: HelmRepository
+        name: redpanda-charts
+        namespace: redpanda
+      interval: 30m
+
+  # First image pull (operator + redpanda images) can be large on a slow link.
+  timeout: 15m
+
+  install:
+    remediation:
+      retries: 3
+    # Install the operator's CRDs (Redpanda, Topic, User, ...) on first install.
+    crds: CreateReplace
+  upgrade:
+    remediation:
+      remediateLastFailure: true
+    # Update CRDs on chart upgrades too (Helm itself never upgrades CRDs).
+    crds: CreateReplace
+
+  # Rely on chart defaults for the operator itself. The redpanda charts ship a
+  # values.schema.json that rejects unknown keys, so we keep this minimal and
+  # do all cluster shaping in the Redpanda CR (../cluster/redpanda.yaml).
+  values: {}

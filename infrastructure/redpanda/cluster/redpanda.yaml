@@ -1,0 +1,93 @@
+# infrastructure/redpanda/cluster/redpanda.yaml
+#
+# The Redpanda cluster, declared as a single custom resource the operator
+# reconciles. spec.clusterSpec mirrors the upstream `redpanda` Helm chart's
+# values (Vol 1 §5.1: "the CRD's clusterSpec is essentially the chart's values
+# schema").
+#
+# ── HOMELAB SHAPE (read this before believing anything is production) ────────
+#   * 3 brokers, RF=3 → real Raft quorum-of-3, so you can practice EVERY
+#     operation in the booklet: maintenance mode, rolling restart, decommission,
+#     under-replication recovery, leadership balancing.
+#   * Only 2 physical nodes (jay1 12c/20G, jay2 4c/8G-with-GitLab). Soft
+#     anti-affinity ⇒ 2 brokers land on jay1, 1 on jay2. CONSEQUENCE: losing
+#     jay1 kills 2/3 brokers = quorum loss. This cluster teaches broker-PROCESS
+#     failure, not true node-fault-tolerance. A production 3-broker cluster
+#     needs 3 nodes (Vol 1 §5.1 rack awareness + hostname anti-affinity).
+#   * TLS + SASL are OFF for this first milestone (no cert-manager yet). This
+#     is an INSECURE lab cluster. Securing it — SASL users, prefixed ACLs,
+#     kafka_enable_authorization, per-principal quotas — is lesson 2 (Vol 1 §8,
+#     Vol 2 §9). The booklet is emphatic: flip authorization on BEFORE tenants
+#     arrive.
+#   * local-path storage (node-local). This actually honors Redpanda's
+#     local-disk design center (Vol 1 §5.2) — just on the OS disk, not a
+#     dedicated NVMe. No cross-node PVC portability: a broker is pinned to its
+#     node's data, which is correct for Redpanda (replace-not-move brokers).
+#   * Guaranteed QoS (requests==limits) but the kubelet CPU-manager static
+#     policy is NOT enabled here, so brokers do NOT get exclusive cpusets. On a
+#     latency-critical prod cluster you'd enable it (Vol 1 §2.4). Skipped
+#     consciously for the lab.
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Redpanda
+metadata:
+  name: redpanda
+  namespace: redpanda
+  labels:
+    app.kubernetes.io/managed-by: flux
+spec:
+  clusterSpec:
+    # ── Broker set ───────────────────────────────────────────────────────────
+    statefulset:
+      replicas: 3
+      # soft = preferredDuringScheduling. Required for a 3-broker cluster on
+      # 2 nodes; "hard" would leave the 3rd broker Pending forever. On a real
+      # 3-node cluster you would use "hard" (never two brokers per node).
+      podAntiAffinity:
+        type: soft
+
+    # ── Per-broker resources (Vol 2 §12.1 sizing) ────────────────────────────
+    # cpu.cores = 1  ⇒  Seastar starts with --smp 1 (one shard per broker).
+    # memory.container.max = 2.5Gi ⇒ redpanda --memory is derived from this
+    # minus container overhead. 2.5Gi is comfortably above Redpanda's per-shard
+    # floor and fits jay2 alongside GitLab.
+    resources:
+      cpu:
+        cores: 1
+      memory:
+        container:
+          max: 2.5Gi
+
+    # ── Storage (Vol 1 §5.2) ─────────────────────────────────────────────────
+    storage:
+      persistentVolume:
+        enabled: true
+        storageClass: local-path
+        size: 5Gi
+
+    # ── Console (web UI) ─────────────────────────────────────────────────────
+    # Deployed as its own Deployment, exposed on a pinned LoadBalancer VIP so
+    # you reach it from the MacBook — same pattern as the StackGres console at
+    # .241. Cilium L2 announcement (already live) advertises .243 on the LAN.
+    console:
+      enabled: true
+      service:
+        type: LoadBalancer
+        annotations:
+          # Pin the VIP from the homelab LB-IPAM pool (192.168.1.240/28).
+          # .240 podinfo, .241 stackgres-ui, .242 postgres — .243 is free.
+          lbipam.cilium.io/ips: "192.168.1.243"
+
+    # ── Listeners / external access ──────────────────────────────────────────
+    # Internal listeners only for this milestone: in-cluster clients reach
+    # brokers via headless-service DNS (redpanda-0.redpanda.redpanda.svc...).
+    # This is the correct default for platform-internal clients (Vol 1 §6.2
+    # Option A). Per-broker external LB VIPs (Option C) are a later lesson.
+    external:
+      enabled: false
+
+    # ── Security: OFF for milestone 1 (see header). Lesson 2 flips these. ─────
+    tls:
+      enabled: false
+    auth:
+      sasl:
+        enabled: false

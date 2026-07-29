@@ -1,0 +1,21 @@
+# clusters/jay1/redpanda-operator.yaml
+#
+# Flux Kustomization that installs the Redpanda operator + CRDs.
+# Kept separate from the cluster Kustomization so the operator can be upgraded
+# independently of cluster state — same pattern as stackgres-operator.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: redpanda-operator
+  namespace: flux-system
+spec:
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/redpanda/operator
+  prune: true
+  # Wait for the HelmRelease (and thus the CRDs) to be Ready before the
+  # dependent cluster Kustomization is allowed to apply the Redpanda CR.
+  wait: true
+  timeout: 15m

@@ -1,0 +1,22 @@
+# clusters/jay1/redpanda-cluster.yaml
+#
+# Flux Kustomization that deploys the Redpanda cluster (the Redpanda CR).
+# dependsOn the operator Kustomization: Flux will not apply the CR until the
+# operator HelmRelease is Ready and the cluster.redpanda.com CRDs exist —
+# exactly the ordering guarantee stackgres-cluster relies on.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: redpanda-cluster
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/redpanda/cluster
+  prune: true
+  dependsOn:
+    - name: redpanda-operator
+  wait: true
+  timeout: 15m

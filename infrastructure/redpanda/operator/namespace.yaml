@@ -1,0 +1,12 @@
+# infrastructure/redpanda/operator/namespace.yaml
+#
+# Dedicated namespace for the Redpanda operator AND the Redpanda cluster.
+# We keep both in one namespace so the operator reconciles the Redpanda CR
+# regardless of whether its RBAC scope is cluster-wide or namespaced.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redpanda
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/part-of: redpanda

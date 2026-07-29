@@ -1,0 +1,10 @@
+# infrastructure/redpanda/cluster/kustomization.yaml
+#
+# The cluster layer: just the Redpanda CR for now. Topics/Users/ACLs will be
+# added here (or under a self-service tenants/ path) in later lessons, each as
+# its own declarative CRD object so Git remains the source of truth and drift
+# is reverted by the operator (Vol 2 §9).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - redpanda.yaml

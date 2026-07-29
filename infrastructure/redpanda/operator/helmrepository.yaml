@@ -1,0 +1,19 @@
+# infrastructure/redpanda/operator/helmrepository.yaml
+#
+# Flux HelmRepository source for the official Redpanda chart distribution.
+# source-controller fetches and caches the index every 30 minutes, so new
+# chart versions are available without a manual `helm repo update`.
+#
+# This single source serves BOTH the `operator` chart (installed here) and,
+# transitively, the `redpanda` cluster chart that the operator renders from
+# the Redpanda CR.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: redpanda-charts
+  namespace: redpanda          # must match the HelmRelease namespace
+  labels:
+    app.kubernetes.io/managed-by: flux
+spec:
+  url: https://charts.redpanda.com
+  interval: 30m
