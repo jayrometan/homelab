@@ -70,6 +70,17 @@ spec:
     # .241. Cilium L2 announcement (already live) advertises .243 on the LAN.
     console:
       enabled: true
+      # Console config overlay (merged over the chart-generated one; our keys
+      # win). The chart hardcodes Console's Kafka client to sasl.enabled=true +
+      # impersonateUser=true, but this cluster has auth OFF — Console then
+      # refuses to boot ("user impersonation ... not allowed when authentication
+      # is disabled"). Turn Console's client SASL off so it connects anonymously.
+      # This gets removed when we enable SASL in lesson 2.
+      config:
+        kafka:
+          sasl:
+            enabled: false
+            impersonateUser: false
       service:
         type: LoadBalancer
         annotations:
