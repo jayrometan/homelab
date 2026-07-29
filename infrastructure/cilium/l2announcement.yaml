@@ -1,0 +1,50 @@
+# infrastructure/cilium/l2announcement.yaml
+#
+# CiliumL2AnnouncementPolicy — makes LoadBalancer IPs reachable from outside
+# the cluster on the same LAN segment by responding to ARP requests.
+#
+# WITHOUT this: Cilium assigns IPs from the homelab-pool but never tells the
+# network they exist. Pods on jay1/jay2 reach them via eBPF (in-kernel), but
+# any host outside the cluster (MacBook, router) sends ARP and gets silence.
+#
+# WITH this: Cilium elects one node per IP to act as the ARP responder. That
+# node replies to ARP with its own MAC address. The switch learns the mapping
+# and starts forwarding traffic for that IP to the elected node. Cilium's eBPF
+# dataplane then forwards it to the correct pod, regardless of which node the
+# pod runs on.
+#
+# Leader election: when multiple nodes match nodeSelector, Cilium runs an
+# internal leader election per IP. Only one node responds to ARP at a time.
+# If that node goes down, another takes over automatically — no floating IP
+# config, no keepalived, no VRRP needed.
+#
+# Interface: regex '^ens[0-9]+' matches ens18 on both jay1 and jay2.
+# Cilium only announces on physical/uplink interfaces — never on lxc*, cilium_*,
+# or tailscale0. The regex prevents accidental announcement on those.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: homelab-l2-policy
+spec:
+  # Announce IPs for ALL LoadBalancer services in the cluster.
+  # Empty matchLabels = select everything. Scope to specific services with
+  # e.g. matchLabels: {announce-via-l2: "true"} and labelling services.
+  serviceSelector:
+    matchLabels: {}
+
+  # All nodes participate in leader election for each IP.
+  # On a two-node cluster this means either jay1 or jay2 can hold the ARP
+  # lease. Narrow this with e.g. matchLabels: {node-role: uplink} if you
+  # want only edge nodes to respond.
+  nodeSelector:
+    matchLabels: {}
+
+  # Only announce LoadBalancer IPs (from the homelab-pool).
+  # externalIPs are a separate field — we don't use those.
+  loadBalancerIPs: true
+  externalIPs: false
+
+  # Physical uplink interface regex. Must match the NIC connected to the
+  # LAN switch — ens18 on both jay1 (192.168.1.25) and jay2 (192.168.1.26).
+  interfaces:
+  - "^ens[0-9]+"

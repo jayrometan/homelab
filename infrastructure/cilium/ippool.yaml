@@ -1,0 +1,23 @@
+# infrastructure/cilium/ippool.yaml
+#
+# CiliumLoadBalancerIPPool — defines the IP range Cilium's LB-IPAM assigns
+# to LoadBalancer Services. Previously applied directly with kubectl; now
+# managed by Flux so it lives in Git as the source of truth.
+#
+# CIDR: 192.168.1.240/28  →  16 addresses (.240–.255)
+#   .240 → podinfo
+#   .241 → stackgres-restapi (StackGres Web Console)
+#   .242 → postgres primary (direct Postgres LB)
+#   .243–.254 → available for future services
+#   .255 → broadcast (unusable)
+#
+# IPs are assigned automatically by Cilium when a Service of type LoadBalancer
+# is created. To request a specific IP, annotate the Service:
+#   lbipam.cilium.io/ips: "192.168.1.243"
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: homelab-pool
+spec:
+  blocks:
+  - cidr: "192.168.1.240/28"
