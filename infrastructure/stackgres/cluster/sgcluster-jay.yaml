@@ -139,3 +139,13 @@ spec:
   #
   # distributedLogs:
   #   sgDistributedLogs: platform-logs   # must exist in same namespace
+
+  # ── Non-production options ────────────────────────────────────────────────────
+  # disableClusterPodAntiAffinity: removes the hard anti-affinity rule that
+  # normally prevents two StackGres pods from sharing a node. Required in a
+  # homelab with 2 nodes and multiple SGClusters — without it, running pods'
+  # anti-affinity symmetrically blocks new StackGres pods from scheduling even
+  # if the new pod has no anti-affinity of its own.
+  # Production: remove this block entirely (default is hard anti-affinity).
+  nonProductionOptions:
+    disableClusterPodAntiAffinity: true
