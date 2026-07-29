@@ -103,32 +103,52 @@ spec:
     #   redpanda-1 → 192.168.1.26:31092  (jay2)
     #   redpanda-2 → 192.168.1.27:31092  (jay3)
     #
-    # This lets us drop the whole per-broker workaround we needed when two
-    # brokers shared jay1: no per-broker Services (external-nodeports.yaml is
-    # gone), and — crucially — NO hardcoded `addresses`. Each broker auto-
-    # advertises its own node's HOST_IP (downward-API status.hostIP), so a broker
-    # that reschedules to another node advertises the new IP automatically
-    # (Vol 1 §6.2). The chart creates a single "redpanda-external" NodePort
-    # Service selecting all brokers on port 31092.
+    # This drops the per-broker workaround we needed when two brokers shared
+    # jay1: no more per-broker Services (external-nodeports.yaml is gone) — the
+    # chart makes a single "redpanda-external" NodePort Service on port 31092.
+    #
+    # We DO still pin node IPs in `addresses`. Learned the hard way: with
+    # NodePort + empty addresses, THIS chart advertises the bare POD NAME
+    # (redpanda-0, …) which no external client can resolve — HOST_IP auto-
+    # advertise only exists on the LoadBalancer path, not NodePort. So node IPs
+    # stay; they just all share one port now.
     external:
       enabled: true
       type: NodePort
-      # (service.enabled defaults true → the chart creates the shared NodePort
-      #  Service; no `addresses` → brokers advertise HOST_IP automatically.)
+      # Node IP per broker (StatefulSet ordinal order); all share the port below.
+      addresses:
+        - "192.168.1.25"   # redpanda-0 → jay1
+        - "192.168.1.26"   # redpanda-1 → jay2
+        - "192.168.1.27"   # redpanda-2 → jay3
     listeners:
       kafka:
         external:
           default:
             # Pod-side listen port (Service targetPort).
             port: 9094
-            # Single value ⇒ one shared nodePort for all brokers. The node IP
-            # disambiguates them (one broker per node + externalTrafficPolicy
-            # Local). Was a per-broker list [31092,31093,31094] when jay1 held two.
+            # Single value ⇒ ONE shared nodePort for all brokers; the node IP
+            # disambiguates them (one broker/node + externalTrafficPolicy=Local).
+            # Was [31092,31093,31094] when jay1 held two brokers.
             advertisedPorts:
               - 31092
             # Plaintext to match milestone-1 posture (TLS lands in lesson 2).
             tls:
               enabled: false
+      # Do NOT expose Admin API / HTTP proxy / Schema Registry off-cluster — the
+      # chart NodePorts them by default when external.enabled. Admin API in
+      # particular must never be externally reachable (Vol 1 §7). Only Kafka is.
+      admin:
+        external:
+          default:
+            enabled: false
+      http:
+        external:
+          default:
+            enabled: false
+      schemaRegistry:
+        external:
+          default:
+            enabled: false
 
     # ── Security: OFF for milestone 1 (see header). Lesson 2 flips these. ─────
     tls:
