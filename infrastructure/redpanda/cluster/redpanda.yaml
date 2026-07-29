@@ -9,11 +9,11 @@
 #   * 3 brokers, RF=3 → real Raft quorum-of-3, so you can practice EVERY
 #     operation in the booklet: maintenance mode, rolling restart, decommission,
 #     under-replication recovery, leadership balancing.
-#   * Only 2 physical nodes (jay1 12c/20G, jay2 4c/8G-with-GitLab). Soft
-#     anti-affinity ⇒ 2 brokers land on jay1, 1 on jay2. CONSEQUENCE: losing
-#     jay1 kills 2/3 brokers = quorum loss. This cluster teaches broker-PROCESS
-#     failure, not true node-fault-tolerance. A production 3-broker cluster
-#     needs 3 nodes (Vol 1 §5.1 rack awareness + hostname anti-affinity).
+#   * 3 physical nodes (jay1 12c/20G, jay2 4c/8G-with-GitLab, jay3 2c/5.5G) with
+#     HARD hostname anti-affinity ⇒ exactly one broker per node
+#     (redpanda-0→jay1, redpanda-1→jay2, redpanda-2→jay3). Losing any ONE node
+#     loses one broker and quorum (2/3) survives — true node-fault-tolerance
+#     (Vol 1 §5.1). This is the production posture.
 #   * TLS + SASL are OFF for this first milestone (no cert-manager yet). This
 #     is an INSECURE lab cluster. Securing it — SASL users, prefixed ACLs,
 #     kafka_enable_authorization, per-principal quotas — is lesson 2 (Vol 1 §8,
@@ -39,11 +39,13 @@ spec:
     # ── Broker set ───────────────────────────────────────────────────────────
     statefulset:
       replicas: 3
-      # soft = preferredDuringScheduling. Required for a 3-broker cluster on
-      # 2 nodes; "hard" would leave the 3rd broker Pending forever. On a real
-      # 3-node cluster you would use "hard" (never two brokers per node).
+      # hard = requiredDuringScheduling: never two brokers on one node. Now that
+      # we have 3 nodes (jay1/jay2/jay3), each broker gets its own node, so
+      # losing ANY single node loses exactly one broker and quorum (2/3) survives
+      # — true node-fault-tolerance (Vol 1 §5.1). This is the production posture.
+      # (Was "soft" while we only had 2 nodes, which forced 2 brokers onto jay1.)
       podAntiAffinity:
-        type: soft
+        type: hard
 
     # ── Per-broker resources (Vol 2 §12.1 sizing) ────────────────────────────
     # cpu.cores = 1  ⇒  Seastar starts with --smp 1 (one shard per broker).
@@ -107,11 +109,16 @@ spec:
     # local-path storage, so these node IPs are stable):
     #   redpanda-0 → 192.168.1.25:31092  (jay1)
     #   redpanda-1 → 192.168.1.26:31093  (jay2)
-    #   redpanda-2 → 192.168.1.25:31094  (jay1)
+    #   redpanda-2 → 192.168.1.27:31094  (jay3)   ← moved from jay1 after jay3 joined
     #
     # CAVEAT (Vol 1 §6.2): node IPs are the advertised addresses, so if a broker
     # ever reschedules to a different node its advertised IP goes stale until the
     # CR is updated. Acceptable here (pinned brokers); LB VIPs would avoid it.
+    # NOTE: now that it's one-broker-per-node, we COULD drop this hardcoding and
+    # let the chart auto-advertise HOST_IP (delete `service.enabled:false` +
+    # `addresses` + the per-broker Services, keep a single advertisedPorts). Left
+    # explicit here so the per-broker mapping stays obvious; that simplification
+    # is a good follow-up.
     external:
       enabled: true
       type: NodePort
@@ -125,7 +132,7 @@ spec:
       addresses:
         - "192.168.1.25"   # redpanda-0 on jay1
         - "192.168.1.26"   # redpanda-1 on jay2
-        - "192.168.1.25"   # redpanda-2 on jay1
+        - "192.168.1.27"   # redpanda-2 on jay3
     listeners:
       kafka:
         external:
