@@ -1,0 +1,34 @@
+# infrastructure/redpanda/cluster/topic-demo.yaml
+#
+# A topic declared the PRODUCTION way: as a Topic CRD the operator reconciles,
+# NOT `rpk topic create` by hand (Vol 2 §9). Git is the source of truth and the
+# audit log; the operator continuously reconciles the live topic to match this
+# spec. If someone runs `rpk topic alter-config` by hand, the operator reverts
+# it on the next sync — drift correction you get for free.
+#
+# Naming follows the booklet convention <team>.<domain>.<stream>.<version>
+# (Vol 1 §8.4). In the real self-service model this whole object would be
+# rendered from a tenant's short CUE request by a platform #Definition that
+# pins RF=3, validates the name prefix against the team, and stamps ACLs/quota.
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Topic
+metadata:
+  name: demo-orders-v1              # k8s object name (must be dns-safe: no dots)
+  namespace: redpanda
+  labels:
+    app.kubernetes.io/managed-by: flux
+spec:
+  # The real Kafka topic name. Dots are illegal in metadata.name, so we set the
+  # dotted convention name here (defaults to metadata.name otherwise).
+  overwriteTopicName: demo.orders.v1
+  # Target cluster: reference the Redpanda CR by name in this namespace. The
+  # operator builds the admin/kafka client from it — no hardcoded broker list,
+  # no deprecated kafkaApiSpec.
+  cluster:
+    clusterRef:
+      name: redpanda
+  partitions: 6                     # start low; you can only ever grow (Vol 2 §15.1)
+  replicationFactor: 3              # durability policy, not a preference; must be odd
+  additionalConfig:
+    retention.ms: "259200000"       # 72h — within the booklet's 1h..30d self-service bound
+    cleanup.policy: "delete"        # changelog/table topics would use "compact"
