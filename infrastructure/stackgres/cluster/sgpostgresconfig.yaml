@@ -42,11 +42,11 @@ spec:
     # ── Memory ──────────────────────────────────────────────────────────────
     # shared_buffers: PostgreSQL's own buffer pool. 25% of RAM is the standard
     # starting point. Tune up if pg_stat_bgwriter shows high buffers_clean.
-    shared_buffers: "1GB"             # production (16Gi RAM): "4GB"
+    shared_buffers: "0.1GB"             # production (16Gi RAM): "4GB"
 
     # effective_cache_size: planner hint about how much the OS will cache.
     # Does not allocate memory — purely advisory for query plan decisions.
-    effective_cache_size: "3GB"       # production (16Gi RAM): "12GB"
+    effective_cache_size: "0.2GB"       # production (16Gi RAM): "12GB"
 
     # maintenance_work_mem: used by VACUUM, CREATE INDEX, ALTER TABLE ADD FK.
     # Higher = faster vacuum and index builds at the cost of RAM during ops.

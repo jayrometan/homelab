@@ -43,7 +43,7 @@ spec:
   # With 3 instances, Patroni requires at least 2 healthy members to elect a
   # primary (quorum). Losing 2 of 3 nodes causes an election stalemate and the
   # cluster goes read-only. This is intentional split-brain protection.
-  instances: 1               # production: 3
+  instances: 2               # production: 3
 
   # ── Postgres version ────────────────────────────────────────────────────────
   postgres:
