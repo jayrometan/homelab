@@ -195,3 +195,40 @@ kubectl delete node <node-name>
 # On 192.168.1.26
 /usr/local/bin/k3s-agent-uninstall.sh
 ```
+
+
+---
+
+## Cilium connectivity test results (2026-07-29)
+
+Run after jay2 joined the cluster. 42/45 tests passed.
+
+```bash
+cilium connectivity test
+```
+
+### Passed (42/45)
+All core scenarios: pod-to-pod (same node and cross-node), pod-to-service,
+DNS resolution, NodePort, health checks, L4 policy enforcement.
+
+### Failed (3/45)
+
+| Test | Cause |
+|---|---|
+| `pod-to-pod-no-frag` | **MTU**: VXLAN adds ~50B overhead; `ping -M do -s 1422` with DF bit set exceeds MTU and drops. Normal TCP traffic with PMTUD is unaffected. Fix: set `--mtu 1450` in Cilium Helm values. |
+| `echo-ingress-l7` | **L7 policy not enabled**: requires Cilium's Envoy proxy for HTTP-aware NetworkPolicy. Not configured in this homelab. |
+| `echo-ingress-l7-named-port` | Same as above. |
+
+### Cross-node manual verification
+
+```bash
+kubectl run test-jay1 --image=busybox:latest --restart=Never \
+  --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"jay1"}}}' -- sleep 120
+kubectl run test-jay2 --image=busybox:latest --restart=Never \
+  --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"jay2"}}}' -- sleep 120
+
+JAY2_IP=$(kubectl get pod test-jay2 -o jsonpath='{.status.podIP}')
+kubectl exec test-jay1 -- ping -c 3 $JAY2_IP
+# 0% loss, ~0.57ms RTT
+# 10.42.0.x (jay1 pod CIDR) → 10.42.1.x (jay2 pod CIDR) via Cilium VXLAN overlay
+```
