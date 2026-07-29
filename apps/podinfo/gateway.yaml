@@ -7,7 +7,7 @@ spec:
   gatewayClassName: cilium
   listeners:
   - name: http
-    port: 80
+    port: 8888
     protocol: HTTP
     allowedRoutes:
       namespaces:
