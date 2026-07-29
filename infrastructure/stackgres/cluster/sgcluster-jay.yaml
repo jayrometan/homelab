@@ -43,7 +43,7 @@ spec:
   # With 3 instances, Patroni requires at least 2 healthy members to elect a
   # primary (quorum). Losing 2 of 3 nodes causes an election stalemate and the
   # cluster goes read-only. This is intentional split-brain protection.
-  instances: 2               # production: 3
+  instances: 1               # production: 3
 
   # ── Postgres version ────────────────────────────────────────────────────────
   postgres:
@@ -121,7 +121,7 @@ spec:
       # In production you might set type: LoadBalancer here too if your BI
       # team needs to connect from outside the cluster (e.g., from Tableau Desktop).
       type: ClusterIP
-      enabled: true    # set false if instances: 1 (no replicas to route to)
+      enabled: false   # set false if instances: 1 (no replicas to route to)
 
   # ── Managed SQL (initialisation scripts) ─────────────────────────────────────
   # SGScript 'init-database' runs on first boot. Creates databases, roles,
