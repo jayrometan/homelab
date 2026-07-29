@@ -7,4 +7,4 @@ resources:
   - sgpostgresconfig.yaml
   - sgpoolingconfig.yaml
   - sgscript.yaml
-  - sgcluster.yaml
+  - sgcluster-jay.yaml
