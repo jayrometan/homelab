@@ -41,5 +41,5 @@ spec:
   # Homelab values — override these for real production:
   #   cpu:    "8"
   #   memory: "16Gi"
-  cpu: "0.5"
+  cpu: "500m"
   memory: "1Gi"
