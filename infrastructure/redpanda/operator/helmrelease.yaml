@@ -49,7 +49,15 @@ spec:
     # Update CRDs on chart upgrades too (Helm itself never upgrades CRDs).
     crds: CreateReplace
 
-  # Rely on chart defaults for the operator itself. The redpanda charts ship a
-  # values.schema.json that rejects unknown keys, so we keep this minimal and
-  # do all cluster shaping in the Redpanda CR (../cluster/redpanda.yaml).
-  values: {}
+  values:
+    # The operator chart does NOT ship CRDs via Helm's crds/ convention; it
+    # installs them with a pre-install hook Job, gated behind this flag (default
+    # false). Without it, zero CRDs are created and the operator crash-loops on
+    # startup ("no matches for kind Console in cluster.redpanda.com/v1alpha2"),
+    # because its controllers — Console is enabled by default — need the CRDs.
+    # The Job runs as a pre-install/pre-upgrade hook (weight -5), so it lands
+    # before the operator Deployment. Enable both tiers so every controller's
+    # CRD exists (stable: Redpanda/Topic/User/Schema; experimental: the rest).
+    crds:
+      enabled: true
+      experimental: true
