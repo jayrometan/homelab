@@ -88,13 +88,59 @@ spec:
           # .240 podinfo, .241 stackgres-ui, .242 postgres — .243 is free.
           lbipam.cilium.io/ips: "192.168.1.243"
 
-    # ── Listeners / external access ──────────────────────────────────────────
-    # Internal listeners only for this milestone: in-cluster clients reach
-    # brokers via headless-service DNS (redpanda-0.redpanda.redpanda.svc...).
-    # This is the correct default for platform-internal clients (Vol 1 §6.2
-    # Option A). Per-broker external LB VIPs (Option C) are a later lesson.
+    # ── Listeners / external access (NodePort, per-broker) ───────────────────
+    # In-cluster clients still use the internal listener (headless DNS,
+    # redpanda-N.redpanda.redpanda.svc...:9093). For EXTERNAL clients (the
+    # MacBook) we expose a NodePort external Kafka listener.
+    #
+    # WHY per-broker nodePorts: the Kafka protocol needs each broker reachable
+    # at the exact address it advertises (Vol 1 §6.1). The chart's stock NodePort
+    # uses ONE shared nodePort and relies on externalTrafficPolicy=Local +
+    # one-broker-per-node so the node IP identifies the broker. But jay1 hosts
+    # TWO brokers (redpanda-0 and -2), so a shared port on 192.168.1.25 is
+    # ambiguous. Fix: give each broker its OWN nodePort, advertise <nodeIP>:<port>
+    # per broker, and back each with a per-broker NodePort Service pinned to that
+    # pod (see external-nodeports.yaml). Distinct ports disambiguate the two jay1
+    # brokers.
+    #
+    # Advertised map (order = StatefulSet ordinal; brokers are node-pinned by
+    # local-path storage, so these node IPs are stable):
+    #   redpanda-0 → 192.168.1.25:31092  (jay1)
+    #   redpanda-1 → 192.168.1.26:31093  (jay2)
+    #   redpanda-2 → 192.168.1.25:31094  (jay1)
+    #
+    # CAVEAT (Vol 1 §6.2): node IPs are the advertised addresses, so if a broker
+    # ever reschedules to a different node its advertised IP goes stale until the
+    # CR is updated. Acceptable here (pinned brokers); LB VIPs would avoid it.
     external:
-      enabled: false
+      enabled: true
+      type: NodePort
+      # We create the per-broker NodePort Services ourselves (the chart's single
+      # shared Service can't pin distinct ports per broker). This tells the
+      # chart to configure advertised listeners but NOT create a Service.
+      service:
+        enabled: false
+      # Advertised host per broker (StatefulSet ordinal order) = the node each
+      # broker is pinned to.
+      addresses:
+        - "192.168.1.25"   # redpanda-0 on jay1
+        - "192.168.1.26"   # redpanda-1 on jay2
+        - "192.168.1.25"   # redpanda-2 on jay1
+    listeners:
+      kafka:
+        external:
+          default:
+            # Pod-side listen port (Service targetPort routes here).
+            port: 9094
+            # Advertised (and nodePort) per broker — indexed by ordinal. These
+            # MUST equal the nodePort of each broker's Service below.
+            advertisedPorts:
+              - 31092
+              - 31093
+              - 31094
+            # Plaintext to match milestone-1 posture (TLS lands in lesson 2).
+            tls:
+              enabled: false
 
     # ── Security: OFF for milestone 1 (see header). Lesson 2 flips these. ─────
     tls:
